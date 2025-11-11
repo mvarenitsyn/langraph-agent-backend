@@ -1,0 +1,487 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LangGraph Agent Demo</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+      background: #f5f5f5;
+      padding: 20px;
+    }
+
+    .container {
+      max-width: 800px;
+      margin: 0 auto;
+      background: white;
+      border-radius: 12px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+      overflow: hidden;
+    }
+
+    .header {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      padding: 24px;
+    }
+
+    .header h1 {
+      font-size: 24px;
+      margin-bottom: 8px;
+    }
+
+    .header p {
+      opacity: 0.9;
+      font-size: 14px;
+    }
+
+    .mode-selector {
+      padding: 16px 24px;
+      background: #f8f9fa;
+      border-bottom: 1px solid #e9ecef;
+      display: flex;
+      gap: 12px;
+    }
+
+    .mode-btn {
+      padding: 8px 16px;
+      border: 2px solid #667eea;
+      background: white;
+      color: #667eea;
+      border-radius: 6px;
+      cursor: pointer;
+      font-weight: 500;
+      transition: all 0.2s;
+    }
+
+    .mode-btn.active {
+      background: #667eea;
+      color: white;
+    }
+
+    .mode-btn:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 4px 8px rgba(102, 126, 234, 0.2);
+    }
+
+    .chat-container {
+      height: 500px;
+      overflow-y: auto;
+      padding: 24px;
+    }
+
+    .message {
+      margin-bottom: 16px;
+      display: flex;
+      gap: 12px;
+    }
+
+    .message.user {
+      flex-direction: row-reverse;
+    }
+
+    .message-content {
+      max-width: 70%;
+      padding: 12px 16px;
+      border-radius: 12px;
+      line-height: 1.5;
+      white-space: pre-wrap;
+    }
+
+    .message.user .message-content {
+      background: #667eea;
+      color: white;
+      border-bottom-right-radius: 4px;
+    }
+
+    .message.assistant .message-content {
+      background: #f1f3f5;
+      color: #212529;
+      border-bottom-left-radius: 4px;
+    }
+
+    .streaming-progress {
+      background: #e7f5ff;
+      border: 1px solid #74c0fc;
+      border-radius: 8px;
+      padding: 16px;
+      margin-bottom: 16px;
+    }
+
+    .progress-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 12px;
+      font-weight: 600;
+      color: #1971c2;
+    }
+
+    .cancel-btn {
+      padding: 4px 12px;
+      background: #fa5252;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 12px;
+    }
+
+    .steps {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .step {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 8px 12px;
+      background: white;
+      border-radius: 6px;
+      font-size: 14px;
+    }
+
+    .step.in_progress {
+      border-left: 3px solid #ffd43b;
+    }
+
+    .step.completed {
+      border-left: 3px solid #51cf66;
+    }
+
+    .step-name {
+      font-weight: 500;
+    }
+
+    .duration {
+      color: #868e96;
+      font-size: 12px;
+    }
+
+    .input-area {
+      padding: 20px 24px;
+      border-top: 1px solid #e9ecef;
+      display: flex;
+      gap: 12px;
+    }
+
+    input {
+      flex: 1;
+      padding: 12px 16px;
+      border: 2px solid #e9ecef;
+      border-radius: 8px;
+      font-size: 14px;
+      transition: border-color 0.2s;
+    }
+
+    input:focus {
+      outline: none;
+      border-color: #667eea;
+    }
+
+    button {
+      padding: 12px 24px;
+      background: #667eea;
+      color: white;
+      border: none;
+      border-radius: 8px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    button:hover:not(:disabled) {
+      background: #5a67d8;
+      transform: translateY(-2px);
+      box-shadow: 0 4px 8px rgba(102, 126, 234, 0.3);
+    }
+
+    button:disabled {
+      background: #adb5bd;
+      cursor: not-allowed;
+    }
+
+    .loading {
+      display: inline-block;
+      width: 16px;
+      height: 16px;
+      border: 2px solid #f3f3f3;
+      border-top: 2px solid #667eea;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+    }
+
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+
+    .example-queries {
+      padding: 16px 24px;
+      background: #f8f9fa;
+      border-bottom: 1px solid #e9ecef;
+    }
+
+    .example-queries h3 {
+      font-size: 14px;
+      color: #495057;
+      margin-bottom: 8px;
+    }
+
+    .example-query {
+      display: inline-block;
+      padding: 6px 12px;
+      margin: 4px;
+      background: white;
+      border: 1px solid #dee2e6;
+      border-radius: 6px;
+      font-size: 13px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .example-query:hover {
+      background: #667eea;
+      color: white;
+      border-color: #667eea;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>🏡 LangGraph Property Agent</h1>
+      <p>Intelligent property search with quality control (RRR Pattern)</p>
+    </div>
+
+    <div class="mode-selector">
+      <button class="mode-btn active" data-mode="simple">Simple (Fast)</button>
+      <button class="mode-btn" data-mode="streaming">Streaming (Live Progress)</button>
+    </div>
+
+    <div class="example-queries">
+      <h3>Try these examples:</h3>
+      <span class="example-query">Find 3 bedroom homes in San Francisco under $1.5M</span>
+      <span class="example-query">Show me properties in Miami Beach</span>
+      <span class="example-query">What are the average home prices in Seattle?</span>
+      <span class="example-query">Tell me about the Austin real estate market</span>
+    </div>
+
+    <div class="chat-container" id="chatContainer"></div>
+
+    <div class="input-area">
+      <input
+        type="text"
+        id="queryInput"
+        placeholder="Ask about properties..."
+        autocomplete="off"
+      />
+      <button id="sendBtn">Send</button>
+    </div>
+  </div>
+
+  <script>
+    const API_BASE = 'http://localhost:3003';
+    const chatContainer = document.getElementById('chatContainer');
+    const queryInput = document.getElementById('queryInput');
+    const sendBtn = document.getElementById('sendBtn');
+    const modeButtons = document.querySelectorAll('.mode-btn');
+    const exampleQueries = document.querySelectorAll('.example-query');
+
+    let mode = 'simple';
+    let threadId = `demo-${Date.now()}`;
+    let abortController = null;
+
+    // Mode selection
+    modeButtons.forEach(btn => {
+      btn.addEventListener('click', () => {
+        modeButtons.forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        mode = btn.dataset.mode;
+      });
+    });
+
+    // Example queries
+    exampleQueries.forEach(query => {
+      query.addEventListener('click', () => {
+        queryInput.value = query.textContent;
+        queryInput.focus();
+      });
+    });
+
+    // Send message
+    sendBtn.addEventListener('click', sendMessage);
+    queryInput.addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') sendMessage();
+    });
+
+    function addMessage(role, content) {
+      const messageDiv = document.createElement('div');
+      messageDiv.className = `message ${role}`;
+
+      const contentDiv = document.createElement('div');
+      contentDiv.className = 'message-content';
+      contentDiv.textContent = content;
+
+      messageDiv.appendChild(contentDiv);
+      chatContainer.appendChild(messageDiv);
+      chatContainer.scrollTop = chatContainer.scrollHeight;
+    }
+
+    function addStreamingProgress() {
+      const progressDiv = document.createElement('div');
+      progressDiv.className = 'streaming-progress';
+      progressDiv.id = 'streamingProgress';
+      progressDiv.innerHTML = `
+        <div class="progress-header">
+          <span>Agent is working...</span>
+          <button class="cancel-btn" onclick="cancelRequest()">Cancel</button>
+        </div>
+        <div class="steps" id="progressSteps"></div>
+      `;
+      chatContainer.appendChild(progressDiv);
+      chatContainer.scrollTop = chatContainer.scrollHeight;
+    }
+
+    function updateProgress(eventType, data) {
+      const stepsContainer = document.getElementById('progressSteps');
+      if (!stepsContainer) return;
+
+      if (eventType === 'step.start') {
+        const stepDiv = document.createElement('div');
+        stepDiv.className = 'step in_progress';
+        stepDiv.id = `step-${data.nodeName}`;
+        stepDiv.innerHTML = `
+          <span class="step-name">${data.nodeName}</span>
+          <span class="loading"></span>
+        `;
+        stepsContainer.appendChild(stepDiv);
+      } else if (eventType === 'step.end') {
+        const stepDiv = document.getElementById(`step-${data.nodeName}`);
+        if (stepDiv) {
+          stepDiv.className = 'step completed';
+          stepDiv.innerHTML = `
+            <span class="step-name">${data.nodeName}</span>
+            <span class="duration">${data.duration}ms</span>
+          `;
+        }
+      }
+      chatContainer.scrollTop = chatContainer.scrollHeight;
+    }
+
+    function removeProgress() {
+      const progressDiv = document.getElementById('streamingProgress');
+      if (progressDiv) progressDiv.remove();
+    }
+
+    async function sendMessage() {
+      const query = queryInput.value.trim();
+      if (!query) return;
+
+      addMessage('user', query);
+      queryInput.value = '';
+      sendBtn.disabled = true;
+
+      try {
+        if (mode === 'simple') {
+          await sendSimpleRequest(query);
+        } else {
+          await sendStreamingRequest(query);
+        }
+      } catch (error) {
+        console.error('Error:', error);
+        addMessage('assistant', 'Sorry, an error occurred. Please try again.');
+      } finally {
+        sendBtn.disabled = false;
+      }
+    }
+
+    async function sendSimpleRequest(query) {
+      const response = await fetch(`${API_BASE}/chat/simple`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query, threadId })
+      });
+
+      const data = await response.json();
+
+      if (data.success) {
+        addMessage('assistant', data.response);
+      } else {
+        throw new Error('Failed to get response');
+      }
+    }
+
+    async function sendStreamingRequest(query) {
+      abortController = new AbortController();
+      addStreamingProgress();
+
+      const response = await fetch(`${API_BASE}/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query, threadId }),
+        signal: abortController.signal
+      });
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n\n');
+          buffer = lines.pop() || '';
+
+          for (let i = 0; i < lines.length; i++) {
+            const line = lines[i];
+            if (!line.startsWith('data: ')) continue;
+
+            const eventLine = lines[i - 1];
+            const eventType = eventLine?.replace('event: ', '') || 'unknown';
+            const data = JSON.parse(line.slice(6));
+
+            if (eventType === 'step.start' || eventType === 'step.end') {
+              updateProgress(eventType, data);
+            } else if (eventType === 'final') {
+              removeProgress();
+              addMessage('assistant', data.response);
+            }
+          }
+        }
+      } catch (error) {
+        if (error.name === 'AbortError') {
+          removeProgress();
+          addMessage('assistant', 'Request cancelled.');
+        } else {
+          throw error;
+        }
+      } finally {
+        abortController = null;
+      }
+    }
+
+    function cancelRequest() {
+      if (abortController) {
+        abortController.abort();
+        removeProgress();
+      }
+    }
+
+    // Initial message
+    addMessage('assistant', 'Hi! I\'m your property search assistant. I use the RRR pattern (Router-Reflect-Retry) to ensure high-quality responses. Ask me about properties!');
+  </script>
+</body>
+</html>

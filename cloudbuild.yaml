@@ -1,0 +1,63 @@
+# Cloud Build configuration for LangGraph Agent Backend
+# Triggered automatically on push to development branch
+
+steps:
+  # Step 1: Build Docker image
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '--tag=us-central1-docker.pkg.dev/rgaautomations/langraph-agent/backend:$COMMIT_SHA'
+      - '--tag=us-central1-docker.pkg.dev/rgaautomations/langraph-agent/backend:latest'
+      - '--cache-from=us-central1-docker.pkg.dev/rgaautomations/langraph-agent/backend:latest'
+      - '.'
+    timeout: 600s
+
+  # Step 2: Push Docker image to Artifact Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'push'
+      - '--all-tags'
+      - 'us-central1-docker.pkg.dev/rgaautomations/langraph-agent/backend'
+    timeout: 300s
+
+  # Step 3: Deploy to Cloud Run
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - 'langraph-agent-backend'
+      - '--image=us-central1-docker.pkg.dev/rgaautomations/langraph-agent/backend:$COMMIT_SHA'
+      - '--region=us-central1'
+      - '--platform=managed'
+      - '--allow-unauthenticated'
+      - '--port=3003'
+      - '--memory=2Gi'
+      - '--cpu=2'
+      - '--timeout=300s'
+      - '--min-instances=0'
+      - '--max-instances=10'
+      - '--concurrency=80'
+      - '--cpu-throttling'
+      - '--set-env-vars=NODE_ENV=production,OPENAI_MODEL=gpt-4o-mini,PERPLEXITY_MODEL=llama-3.1-sonar-small-128k-online,PORT=3003'
+      - '--update-secrets=OPENAI_API_KEY=OPENAI_API_KEY:latest,DATABASE_URL=DATABASE_URL:latest,PERPLEXITY_API_KEY=PERPLEXITY_API_KEY:latest'
+    timeout: 300s
+
+# Build configuration
+options:
+  machineType: 'E2_HIGHCPU_8'
+  logging: CLOUD_LOGGING_ONLY
+  dynamicSubstitutions: true
+
+# Total timeout for entire build
+timeout: 1200s
+
+# Substitutions (available as $VARIABLE_NAME in steps)
+substitutions:
+  _SERVICE_NAME: 'langraph-agent-backend'
+  _REGION: 'us-central1'
+
+# Artifact Registry repository
+images:
+  - 'us-central1-docker.pkg.dev/rgaautomations/langraph-agent/backend:$COMMIT_SHA'
+  - 'us-central1-docker.pkg.dev/rgaautomations/langraph-agent/backend:latest'

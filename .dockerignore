@@ -1,0 +1,67 @@
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# Dependencies (will be installed during build)
+node_modules/
+
+# Build artifacts (will be generated during build)
+dist/
+build/
+*.tsbuildinfo
+
+# Environment variables (use secrets instead)
+.env
+.env.*
+!.env.example
+
+# Documentation
+README.md
+CHANGELOG.md
+*.md
+docs/
+
+# Testing
+tests/
+__tests__/
+*.test.ts
+*.test.js
+*.spec.ts
+*.spec.js
+coverage/
+.nyc_output/
+jest.config.*
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*.swn
+.DS_Store
+
+# CI/CD
+.github/
+cloudbuild.yaml
+Dockerfile
+.dockerignore
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# LangGraph Studio (development only)
+.langgraph/
+
+# Misc
+.prettierrc
+.eslintrc*
+.editorconfig

@@ -1,0 +1,43 @@
+{
+  "name": "langraph-agent-boilerplate",
+  "version": "1.0.0",
+  "description": "Production-ready LangGraph agent with tools registry, RRR pattern, persistent memory, and streaming",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "tsx src/server.ts",
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "test": "jest",
+    "setup-db": "tsx src/checkpointer/setup-db.ts",
+    "studio": "npx @langchain/langgraph-cli@latest dev --host localhost --port 8123",
+    "trace": "tsx scripts/trace-viewer.ts"
+  },
+  "keywords": [
+    "langgraph",
+    "langchain",
+    "ai",
+    "agent",
+    "rrr-pattern",
+    "streaming",
+    "openai"
+  ],
+  "dependencies": {
+    "@langchain/core": "^1.0.3",
+    "@langchain/langgraph": "^1.0.1",
+    "@langchain/langgraph-checkpoint-postgres": "^1.0.0",
+    "@langchain/openai": "^1.0.0",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "openai": "^4.77.3",
+    "pg": "^8.13.1",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.10.5",
+    "@types/pg": "^8.11.10",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}
