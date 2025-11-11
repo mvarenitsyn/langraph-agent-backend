@@ -26,7 +26,7 @@ steps:
     args:
       - 'run'
       - 'deploy'
-      - 'langraph-agent-backend'
+      - 'realvistai'
       - '--image=us-central1-docker.pkg.dev/rgaautomations/langraph-agent/backend:$COMMIT_SHA'
       - '--region=us-central1'
       - '--platform=managed'
@@ -54,7 +54,7 @@ timeout: 1200s
 
 # Substitutions (available as $VARIABLE_NAME in steps)
 substitutions:
-  _SERVICE_NAME: 'langraph-agent-backend'
+  _SERVICE_NAME: 'realvistai'
   _REGION: 'us-central1'
 
 # Artifact Registry repository
