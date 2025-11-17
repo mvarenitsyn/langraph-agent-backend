@@ -2,6 +2,19 @@ import { Annotation } from "@langchain/langgraph";
 import { BaseMessage } from "@langchain/core/messages";
 
 /**
+ * User Context for personalization
+ * Received from frontend/backend with authentication and profile info
+ */
+export interface UserContext {
+  isAuthenticated?: boolean;
+  fullName?: string;
+  email?: string;
+  preferences?: Record<string, any>;
+  searchHistory?: string[];
+  savedProperties?: string[];
+}
+
+/**
  * Agent State Definition
  *
  * This defines the state structure for the LangGraph agent.
@@ -77,6 +90,33 @@ export const AgentState = Annotation.Root({
    * Session metadata
    */
   metadata: Annotation<Record<string, any>>({
+    reducer: (existing, incoming) => ({ ...existing, ...incoming }),
+    default: () => ({}),
+  }),
+
+  /**
+   * User context for personalization
+   * Contains authentication status and user profile information
+   */
+  userContext: Annotation<UserContext>({
+    reducer: (existing, incoming) => ({ ...existing, ...incoming }),
+    default: () => ({ isAuthenticated: false }),
+  }),
+
+  /**
+   * Pending tool calls extracted from last AIMessage
+   * Used by generate-status node to create status messages in parallel
+   */
+  pendingToolCalls: Annotation<Array<{ id: string; name: string; args: Record<string, any> }>>({
+    reducer: (_, incoming) => incoming,
+    default: () => [],
+  }),
+
+  /**
+   * Status messages generated for each tool call
+   * Maps toolCallId -> status message for tracking
+   */
+  statusMessages: Annotation<Record<string, string>>({
     reducer: (existing, incoming) => ({ ...existing, ...incoming }),
     default: () => ({}),
   }),

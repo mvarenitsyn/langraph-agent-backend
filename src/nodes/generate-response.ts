@@ -12,14 +12,33 @@ import { createResponseModel } from "../models/openai.js";
 export async function generateResponseNode(state: AgentStateType): Promise<Partial<AgentStateType>> {
   console.log('\n[GenerateResponse] Creating final response...');
 
+  // Extract user context for personalization
+  const userContext = state.metadata?.userContext || state.userContext || { isAuthenticated: false };
+  const userName = userContext.fullName || 'there';
+  const firstName = userName.split(' ')[0]; // Use first name only for familiarity
+  const isAuthenticated = userContext.isAuthenticated || false;
+
+  console.log(`[GenerateResponse] Personalizing for: ${firstName} (auth=${isAuthenticated})`);
+
   try {
     const model = createResponseModel();
 
-    // Build response generation prompt
+    // Build response generation prompt with personalization
+    const personalizedIntro = isAuthenticated
+      ? `You are RealVista, a helpful real estate assistant helping ${userName} find properties in South Florida.`
+      : `You are RealVista, a helpful real estate assistant specializing in South Florida. The user is browsing as a guest.`;
+
     const responsePrompt = `
-You are RealVista, a helpful real estate assistant specializing in Miami, Florida.
+${personalizedIntro}
 
 **RESPONSE STYLE: CONCISE & DIRECT**
+${isAuthenticated
+  ? `- Address the user by their first name: ${firstName}
+- Maintain a personal, conversational tone
+- Reference that you're helping them specifically`
+  : `- Use a friendly, professional tone
+- Avoid assuming the user has an account
+- Consider suggesting account creation for personalized features`}
 - Get to the point quickly - avoid lengthy explanations
 - Use bullet points and short paragraphs
 - Skip obvious statements and filler words

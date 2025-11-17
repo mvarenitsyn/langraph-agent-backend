@@ -1,4 +1,5 @@
 import { DynamicStructuredTool } from "@langchain/core/tools";
+import { RunnableLambda } from "@langchain/core/runnables";
 import { z } from "zod";
 import https from "https";
 
@@ -13,6 +14,7 @@ import https from "https";
 interface SearchAPIResponse {
   success: boolean;
   data?: {
+    searchId: string; // UUID v4 for retrieving saved search results
     properties: any[];
     totalCount: number;
     searchToken: string | null;
@@ -62,7 +64,7 @@ function buildSearchSummary(response: SearchAPIResponse): string {
     return response.error || "Search failed";
   }
 
-  const { totalCount, query, searchToken } = response.data;
+  const { totalCount, query, searchToken, searchId } = response.data;
 
   if (totalCount === 0) {
     return `No properties found matching "${query.original}". Try adjusting your search criteria.`;
@@ -82,10 +84,16 @@ function buildSearchSummary(response: SearchAPIResponse): string {
     parts.push(`Listing type: For ${intentType}`);
   }
 
-  // Add searchToken info
+  // Add searchId info (primary identifier for backend)
+  if (searchId) {
+    parts.push(`\nSearch ID: ${searchId}`);
+    parts.push(`(Properties are now displayed on the interactive map)`);
+  }
+
+  // Add searchToken info (for sharing)
   if (searchToken) {
-    parts.push(`\nSearch Token: ${searchToken}`);
-    parts.push(`(Users can view these results on the interactive map using this token)`);
+    parts.push(`\nShare Token: ${searchToken}`);
+    parts.push(`(Users can share this token to view the same results)`);
   }
 
   return parts.join('\n');
@@ -96,9 +104,9 @@ function buildSearchSummary(response: SearchAPIResponse): string {
  */
 export const propertySearchTool = new DynamicStructuredTool({
   name: "property_search",
-  description: `Search for properties using natural language queries. 
-  
-  This tool returns a summary of matching properties and a searchToken that users can use to view results on an interactive map.  
+  description: `Search for properties using natural language queries.
+
+  This tool returns a summary of matching properties and a searchToken that users can use to view results on an interactive map.
 
 
 Examples:
@@ -109,17 +117,38 @@ Examples:
 The tool returns the total count and a searchToken for viewing results on the map.`,
   schema: z.object({
     query: z.string().describe("Natural language property search query (e.g., '2 bedroom condos in Miami under 500k')"),
-    userId: z.string().optional().describe("User ID for token expiration tracking (optional)"),
-    sessionId: z.string().optional().describe("Session tracking ID (optional)"),
   }),
-  func: async ({ query, userId, sessionId }) => {
+  func: async ({ query }, config) => {
     console.log(`[PropertySearchTool] Searching: "${query}"`);
 
+    // Extract sessionId, userId, and userContext from config metadata (injected by custom ToolNode)
+    const sessionId = (config as any)?.metadata?.sessionId;
+    const userId = (config as any)?.metadata?.userId;
+    const userContext = (config as any)?.metadata?.userContext || { isAuthenticated: false };
+
+    const userName = userContext.fullName || 'Guest';
+    const isAuthenticated = userContext.isAuthenticated || false;
+
+    console.log(`[PropertySearchTool] User: ${userName} (authenticated=${isAuthenticated})`);
+    console.log(`[PropertySearchTool] Using sessionId: ${sessionId}, userId: ${userId}`);
+
     try {
+      console.log('[PropertySearchTool] 🚀 DEBUG: ABOUT TO MAKE FETCH CALL');
+      console.log('[PropertySearchTool] 🚀 DEBUG: URL: https://localhost:3001/api/search');
+      console.log('[PropertySearchTool] 🚀 DEBUG: Method: POST');
+      console.log('[PropertySearchTool] 🚀 DEBUG: Body:', JSON.stringify({
+        query,
+        excludeProperties: true,
+        userId,
+        sessionId,
+      }, null, 2));
+
       // Create HTTPS agent that bypasses SSL verification for localhost
       const httpsAgent = new https.Agent({
         rejectUnauthorized: false,
       });
+
+      console.log('[PropertySearchTool] 🚀 DEBUG: HTTPS Agent created, making fetch call...');
 
       // Make API request
       const response = await fetch('https://localhost:3001/api/search', {
@@ -137,11 +166,19 @@ The tool returns the total count and a searchToken for viewing results on the ma
         agent: httpsAgent,
       });
 
+      console.log('[PropertySearchTool] ✅ DEBUG: FETCH COMPLETED');
+      console.log('[PropertySearchTool] ✅ DEBUG: Response status:', response.status);
+      console.log('[PropertySearchTool] ✅ DEBUG: Response statusText:', response.statusText);
+      console.log('[PropertySearchTool] ✅ DEBUG: Response ok:', response.ok);
+
       if (!response.ok) {
+        console.error('[PropertySearchTool] ❌ DEBUG: API ERROR - status not ok');
         throw new Error(`API returned ${response.status}: ${response.statusText}`);
       }
 
+      console.log('[PropertySearchTool] 📦 DEBUG: Parsing JSON response...');
       const data = await response.json() as SearchAPIResponse;
+      console.log('[PropertySearchTool] 📦 DEBUG: Response data:', JSON.stringify(data, null, 2));
 
       // Build summary for LLM
       const summary = buildSearchSummary(data);
@@ -151,9 +188,10 @@ The tool returns the total count and a searchToken for viewing results on the ma
         success: data.success,
         summary,
         totalCount: data.data?.totalCount || 0,
-        searchToken: data.data?.searchToken || null,
-        mapLink: data.data?.searchToken
-          ? `View ${data.data.totalCount} properties on map with token: ${data.data.searchToken}`
+        searchId: data.data?.searchId || null, // UUID v4 for retrieving search results
+        searchToken: data.data?.searchToken || null, // Shareable token
+        mapLink: data.data?.searchId
+          ? `Properties are now displayed on the interactive map (searchId: ${data.data.searchId})`
           : null,
         queryMetadata: {
           original: data.data?.query.original || query,

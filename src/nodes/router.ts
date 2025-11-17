@@ -20,6 +20,13 @@ import { globalToolsRegistry } from "../tools/registry.js";
 export async function routerNode(state: AgentStateType): Promise<Partial<AgentStateType>> {
   console.log(`\n[Agent] Processing message: "${state.message}"`);
 
+  // Extract user context for personalization
+  const userContext = state.metadata?.userContext || state.userContext || { isAuthenticated: false };
+  const userName = userContext.fullName || 'there';
+  const isAuthenticated = userContext.isAuthenticated || false;
+
+  console.log(`[Router] User: ${userName} (authenticated=${isAuthenticated})`);
+
   try {
     // Get all registered tools
     const tools = globalToolsRegistry.getAllTools();
@@ -30,9 +37,15 @@ export async function routerNode(state: AgentStateType): Promise<Partial<AgentSt
     const modelWithTools = model.bindTools(tools);
 
     // Build messages array including conversation history
+    // Personalize system prompt based on authentication status
+    const systemPrompt = isAuthenticated
+      ? `You are RealVista, an intelligent AI assistant and real estate expert helping ${userName} find properties in South Florida.`
+      : `You are RealVista, an intelligent AI assistant and real estate expert in South Florida. The user is browsing as a guest.`;
+
     const messages = [
       new SystemMessage({
-        content: `You are RealVista an intelligent AI assistant and real estate expert in South Florida. Your job is to analyze user queries and select the most appropriate tools or general knowledge to answer user's question, or perform a task.
+        content: `${systemPrompt}
+Your job is to analyze user queries and select the most appropriate tools or general knowledge to answer user's question, or perform a task.
 Use only verified grounded data, do not come up with something you don't know or now sure about.
 
 **Tool Selection Guidelines:**
@@ -99,7 +112,64 @@ Use only verified grounded data, do not come up with something you don't know or
 
       if (toolsWereUsed) {
         // Tools were used earlier, agent is synthesizing results
-        // DO NOT skip RRR - let reflect evaluate the quality
+
+        // ============================================================
+        // OPTIMIZATION: Fast-path for successful simple searches
+        // ============================================================
+        // Check if the last tool call was property_search and if it succeeded
+        const toolMessages = state.messages?.filter(msg => msg._getType() === 'tool') || [];
+        const lastToolMessage = toolMessages.slice(-1)[0];
+
+        // Find the most recent tool call from AIMessages
+        const aiMessagesWithTools = state.messages?.filter(
+          msg => msg._getType() === 'ai' && (msg as AIMessage).tool_calls?.length > 0
+        ) || [];
+        const lastToolCall = (aiMessagesWithTools.slice(-1)[0] as AIMessage)?.tool_calls?.[0];
+
+        const wasPropertySearch = lastToolCall?.name === 'property_search';
+
+        let searchSuccessful = false;
+        if (wasPropertySearch && lastToolMessage) {
+          try {
+            // Parse tool result from ToolMessage content
+            const toolContent = lastToolMessage.content;
+            const parsedResult = typeof toolContent === 'string'
+              ? JSON.parse(toolContent)
+              : toolContent;
+
+            // Success criteria: tool succeeded, has results, and has searchToken
+            searchSuccessful = parsedResult?.success === true &&
+                              parsedResult?.totalCount > 0 &&
+                              parsedResult?.searchToken != null;
+
+            if (searchSuccessful) {
+              console.log(`[Agent] ✅ Property search successful (${parsedResult.totalCount} properties) - FAST-PATH: Skipping RRR`);
+              console.log(`[Agent]    SearchToken: ${parsedResult.searchToken}`);
+            }
+          } catch (parseError) {
+            console.warn('[Agent] Failed to parse tool result for fast-path check:', parseError);
+          }
+        }
+
+        // Fast-path: Skip RRR for successful property searches
+        if (wasPropertySearch && searchSuccessful) {
+          const conversationalResponse = response.content as string;
+          const userMessage = new HumanMessage({ content: state.message });
+
+          return {
+            messages: [userMessage, response],
+            finalResponse: conversationalResponse,
+            metadata: {
+              ...state.metadata,
+              usedTools: true,
+              skipRRR: true, // ✅ CRITICAL: Skip reflection for successful searches
+              fastPath: 'simple-search-success',
+              optimizationApplied: true,
+            },
+          };
+        }
+
+        // Default: Proceed to reflection for all other cases
         console.log('[Agent] Synthesizing tool results into response - will proceed to reflection');
 
         const conversationalResponse = response.content as string;

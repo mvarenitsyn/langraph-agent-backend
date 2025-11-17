@@ -7,7 +7,8 @@ export const config = {
   // OpenAI Configuration
   openai: {
     apiKey: process.env.OPENAI_API_KEY || '',
-    model: process.env.OPENAI_MODEL || 'gpt-4o',
+    model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
+    reasoning: { "effort": "low" },
     temperature: parseFloat(process.env.OPENAI_TEMPERATURE || '0.7'),
   },
 
@@ -31,6 +32,12 @@ export const config = {
   // Logging
   logging: {
     level: process.env.LOG_LEVEL || 'info',
+  },
+
+  // Pub/Sub Configuration
+  pubsub: {
+    projectId: process.env.GCP_PROJECT_ID || 'gen-lang-client-0355624828',
+    uiRenderTopic: process.env.UI_RENDER_TOPIC || 'ui.render',
   },
 
   // Agent Configuration
