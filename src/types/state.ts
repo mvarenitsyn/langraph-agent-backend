@@ -15,14 +15,20 @@ export interface UserContext {
 }
 
 /**
- * Agent State Definition
+ * SIMPLIFIED Agent State Definition
  *
  * This defines the state structure for the LangGraph agent.
  * The state persists across all nodes in the graph and through checkpoints.
+ *
+ * Removed during simplification (January 2025):
+ * - reflection: reflect node removed
+ * - retryCount/maxRetries: retry logic removed
+ * - pendingToolCalls/statusMessages: parallel execution removed
  */
 export const AgentState = Annotation.Root({
   /**
    * Messages array - contains the conversation history
+   * Includes user messages, AI responses, and tool results
    * Reducer concatenates new messages with existing ones
    */
   messages: Annotation<BaseMessage[]>({
@@ -40,6 +46,7 @@ export const AgentState = Annotation.Root({
 
   /**
    * Intermediate results from tools
+   * Used for passing tool results to generate_response node
    */
   toolResults: Annotation<Record<string, any>>({
     reducer: (existing, incoming) => ({ ...existing, ...incoming }),
@@ -47,31 +54,8 @@ export const AgentState = Annotation.Root({
   }),
 
   /**
-   * Reflection output from the reflect node
-   */
-  reflection: Annotation<string | null>({
-    reducer: (_, incoming) => incoming,
-    default: () => null,
-  }),
-
-  /**
-   * Retry count for error handling
-   */
-  retryCount: Annotation<number>({
-    reducer: (existing, incoming) => incoming ?? existing,
-    default: () => 0,
-  }),
-
-  /**
-   * Maximum retries allowed
-   */
-  maxRetries: Annotation<number>({
-    reducer: (_, incoming) => incoming,
-    default: () => 3,
-  }),
-
-  /**
    * Final response to be returned to the user
+   * Generated ONLY by generate_response node
    */
   finalResponse: Annotation<string | null>({
     reducer: (_, incoming) => incoming,
@@ -88,6 +72,7 @@ export const AgentState = Annotation.Root({
 
   /**
    * Session metadata
+   * Used for sessionId, userId, etc. from frontend/backend
    */
   metadata: Annotation<Record<string, any>>({
     reducer: (existing, incoming) => ({ ...existing, ...incoming }),
@@ -101,24 +86,6 @@ export const AgentState = Annotation.Root({
   userContext: Annotation<UserContext>({
     reducer: (existing, incoming) => ({ ...existing, ...incoming }),
     default: () => ({ isAuthenticated: false }),
-  }),
-
-  /**
-   * Pending tool calls extracted from last AIMessage
-   * Used by generate-status node to create status messages in parallel
-   */
-  pendingToolCalls: Annotation<Array<{ id: string; name: string; args: Record<string, any> }>>({
-    reducer: (_, incoming) => incoming,
-    default: () => [],
-  }),
-
-  /**
-   * Status messages generated for each tool call
-   * Maps toolCallId -> status message for tracking
-   */
-  statusMessages: Annotation<Record<string, string>>({
-    reducer: (existing, incoming) => ({ ...existing, ...incoming }),
-    default: () => ({}),
   }),
 });
 

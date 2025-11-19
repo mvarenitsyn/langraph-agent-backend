@@ -1,98 +1,80 @@
-import { HumanMessage, AIMessage } from "@langchain/core/messages";
+import { SystemMessage, HumanMessage, AIMessage } from "@langchain/core/messages";
 import { AgentStateType } from "../types/state.js";
 import { createResponseModel } from "../models/openai.js";
 
 /**
- * Generate Response Node
+ * SIMPLIFIED Generate Response Node
  *
- * Final node that synthesizes all tool results and creates a comprehensive
- * response for the user.
+ * This is the ONLY node that creates final user-facing text.
+ * It analyzes the full conversation (including tool results) and generates a helpful response.
  */
-
 export async function generateResponseNode(state: AgentStateType): Promise<Partial<AgentStateType>> {
   console.log('\n[GenerateResponse] Creating final response...');
 
-  console.log('[GenerateResponse] ====== DEBUG: State Received ======');
-  console.log('[GenerateResponse] state.metadata exists?', !!state.metadata);
-  console.log('[GenerateResponse] state.metadata:', JSON.stringify(state.metadata, null, 2));
-  console.log('[GenerateResponse] state.userContext exists?', !!state.userContext);
-  console.log('[GenerateResponse] state.userContext:', JSON.stringify(state.userContext, null, 2));
-
   // Extract user context for personalization
-  const userContext = state.metadata?.userContext || state.userContext || { isAuthenticated: false };
+  const userContext = state.userContext || { isAuthenticated: false };
   const userName = userContext.fullName || 'there';
-  const firstName = userName.split(' ')[0]; // Use first name only for familiarity
+  const firstName = userName.split(' ')[0];
   const isAuthenticated = userContext.isAuthenticated || false;
 
-  console.log('[GenerateResponse] ====== DEBUG: UserContext Extraction ======');
-  console.log('[GenerateResponse] Using userContext from:', state.metadata?.userContext ? 'metadata' : (state.userContext ? 'state' : 'default'));
-  console.log('[GenerateResponse] Final userContext:', JSON.stringify(userContext, null, 2));
-  console.log(`[GenerateResponse] Personalizing for: ${firstName} (auth=${isAuthenticated})`);
+  console.log(`[GenerateResponse] Personalizing for: ${firstName} (authenticated=${isAuthenticated})`);
 
   try {
     const model = createResponseModel();
 
-    // Build response generation prompt with personalization
-    const personalizedIntro = isAuthenticated
+    // Build personalized system prompt - SIMPLIFIED VERSION
+    const systemPrompt = isAuthenticated
       ? `You are RealVista, a helpful real estate assistant helping ${userName} find properties in South Florida.`
       : `You are RealVista, a helpful real estate assistant specializing in South Florida. The user is browsing as a guest.`;
 
-    const responsePrompt = `
-${personalizedIntro}
+    const instructions = `
+**Your job:** Create a concise, helpful response based on the conversation and any tool results.
 
-**RESPONSE STYLE: CONCISE & DIRECT**
+**Response Style:**
 ${isAuthenticated
   ? `- Address the user by their first name: ${firstName}
-- Maintain a personal, conversational tone
-- Reference that you're helping them specifically`
+- Maintain a personal, conversational tone`
   : `- Use a friendly, professional tone
-- Avoid assuming the user has an account
-- Consider suggesting account creation for personalized features`}
-- Get to the point quickly - avoid lengthy explanations
-- Use bullet points and short paragraphs
-- Skip obvious statements and filler words
-- For property searches: Lead with key numbers (count, price range), then 2-3 bullet highlights
-- Next steps: 1-2 clear options max, not a long menu
-
-**User's Original Message:** ${state.message}
-
-**Tool Results Available:**
-${JSON.stringify(state.toolResults, null, 2)}
-
-**Reflection Analysis:**
-${state.reflection || 'No reflection available'}
-
-**Instructions:**
-1. Start with the core answer (numbers, findings, or direct response)
-2. Add 2-4 key highlights or bullet points (not exhaustive lists)
-3. Mention any limitations briefly (1 sentence if needed)
-4. End with 1-2 actionable next steps
-5. Be conversational but concise - quality over quantity
+- Avoid assuming the user has an account`}
+- Be concise and direct - get to the point quickly
+- Use bullet points for key information
+- For property searches: Lead with key numbers (count, price range), then highlights
+- End with 1-2 clear next step suggestions
 
 **Structure for Property Searches:**
 - First line: "Found X properties [with key criteria]"
-- 2-3 bullet points: typical price range, property types, locations/features
-- Brief note if listing details not included
-- 1-2 next step suggestions (get details, schedule showings, etc.)
+- 2-3 bullet points: price range, property types, key features
+- Brief note if you can't provide full details
+- 1-2 next step suggestions (view on map, refine search, etc.)
 
-Generate a focused, concise response. Aim for clarity and brevity.
+Generate a focused, helpful response based on the conversation history below.
 `;
 
-    const response = await model.invoke([
-      new HumanMessage({ content: responsePrompt }),
-    ]);
+    const messages = [
+      new SystemMessage({
+        content: `${systemPrompt}\n${instructions}`,
+      }),
+      // Include FULL conversation history (includes user messages, AI tool selections, and tool results)
+      ...(state.messages || []),
+    ];
 
+    console.log(`[GenerateResponse] Processing ${messages.length} messages from conversation history`);
+
+    // Generate final response
+    const response = await model.invoke(messages);
     const finalResponse = response.content as string;
+
     console.log('[GenerateResponse] ✓ Response generated');
 
-    // Add final AI response to messages array for LangGraph Studio
+    // Add final AI response to messages array for conversation history
     const aiMessage = new AIMessage({ content: finalResponse });
+
     return {
       finalResponse,
       messages: [aiMessage],
     };
   } catch (error) {
-    console.error('[GenerateResponse] ✗ Error:', error);
+    console.error('[GenerateResponse] Error:', error);
     return {
       error: error instanceof Error ? error.message : 'Response generation failed',
       finalResponse: 'I apologize, but I encountered an error generating a response. Please try again.',
