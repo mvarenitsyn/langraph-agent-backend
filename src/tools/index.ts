@@ -6,7 +6,10 @@
 
 import { globalToolsRegistry } from "./registry.js";
 import { propertySearchTool, propertyDetailsTool } from "./property-search.js";
-import { perplexitySearchTool, perplexityRealEstateResearchTool } from "./perplexity-search.js";
+import { perplexitySearchTool } from "./perplexity-search.js";
+import { propertyFilterSortTool, propertyGetResultsTool, propertyGetDetailsTool } from "./property-operations.js";
+import { addressValidatorTool } from "./address-validator.js";
+import { trestleMetadataExplorerTool } from "./trestle-metadata-explorer.js";
 
 /**
  * Initialize and register all tools
@@ -18,9 +21,19 @@ export function initializeTools() {
   globalToolsRegistry.register(propertySearchTool);
   globalToolsRegistry.register(propertyDetailsTool);
 
-  // Register Perplexity search tools
+  // Register property operations tools (filter, sort, get results, get details)
+  globalToolsRegistry.register(propertyFilterSortTool);
+  globalToolsRegistry.register(propertyGetResultsTool);
+  globalToolsRegistry.register(propertyGetDetailsTool);
+
+  // Register Perplexity search tool
   globalToolsRegistry.register(perplexitySearchTool);
-  globalToolsRegistry.register(perplexityRealEstateResearchTool);
+
+  // Register address validator tool
+  globalToolsRegistry.register(addressValidatorTool);
+
+  // Register Trestle metadata explorer tool
+  globalToolsRegistry.register(trestleMetadataExplorerTool);
 
   const stats = globalToolsRegistry.getStats();
   console.log(`[Tools] ✓ Registered ${stats.totalTools} tools: ${stats.toolNames.join(', ')}`);
@@ -31,4 +44,7 @@ export function initializeTools() {
 // Export registry and individual tools
 export { globalToolsRegistry };
 export { propertySearchTool, propertyDetailsTool } from "./property-search.js";
-export { perplexitySearchTool, perplexityRealEstateResearchTool } from "./perplexity-search.js";
+export { propertyFilterSortTool, propertyGetResultsTool, propertyGetDetailsTool } from "./property-operations.js";
+export { perplexitySearchTool } from "./perplexity-search.js";
+export { addressValidatorTool } from "./address-validator.js";
+export { trestleMetadataExplorerTool } from "./trestle-metadata-explorer.js";

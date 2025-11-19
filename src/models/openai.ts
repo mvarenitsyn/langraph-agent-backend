@@ -1,5 +1,6 @@
 import { ChatOpenAI } from "@langchain/openai";
 import { config } from "../config/index.js";
+import { ReflectionOutputSchema } from "../types/reflection.js";
 
 /**
  * OpenAI Models Module
@@ -45,17 +46,23 @@ export function createToolCallingModel(maxTokens?: number) {
 
 /**
  * Create a ChatOpenAI instance optimized for reflection/analysis
+ * Returns structured output matching ReflectionOutputSchema
  */
 export function createReflectionModel(maxTokens?: number) {
   // GPT-5 only supports temperature=1
   const temperature = config.openai.model.includes('gpt-5') ? 1 : 0.3;
-  return new ChatOpenAI({
+  const baseModel = new ChatOpenAI({
     apiKey: config.openai.apiKey,
     model: config.openai.model,
     temperature,
-    streaming: true,
+    streaming: false, // Structured output requires non-streaming
     maxTokens: maxTokens ?? config.tokenLimits.reflect,
     timeout: config.timeouts.model,
+  });
+
+  // Return model with structured output using Zod schema
+  return baseModel.withStructuredOutput(ReflectionOutputSchema, {
+    name: 'reflection_output',
   });
 }
 

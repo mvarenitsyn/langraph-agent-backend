@@ -1,8 +1,11 @@
 import express, { Request, Response } from 'express';
 import { HumanMessage } from "@langchain/core/messages";
+import { randomUUID } from 'crypto';
 import { config, validateConfig } from './config/index.js';
 import { initializeTools } from './tools/index.js';
 import { createAgentGraph } from './graph/index.js';
+import { PubSub } from '@google-cloud/pubsub';
+import { AgentSubscriber } from './pubsub/subscriber.js';
 import {
   createSSEMessage,
   createStepStartEvent,
@@ -64,7 +67,11 @@ app.post('/chat', async (req: Request, res: Response) => {
         toolResults: {},
         retryCount: 0,
         maxRetries: 3,
-        metadata: {},
+        metadata: {
+          sessionId: threadId,
+          userId: req.body.userId, // Optional: can be passed from client
+          correlationId: randomUUID(),
+        },
       },
       {
         ...configurable,
@@ -151,7 +158,11 @@ app.post('/chat/simple', async (req: Request, res: Response) => {
         toolResults: {},
         retryCount: 0,
         maxRetries: 3,
-        metadata: {},
+        metadata: {
+          sessionId: threadId,
+          userId: req.body.userId, // Optional: can be passed from client
+          correlationId: randomUUID(),
+        },
       },
       configurable
     );
@@ -212,6 +223,18 @@ async function startServer() {
 
     // Initialize tools
     initializeTools();
+
+    // Initialize Pub/Sub subscriber
+    const pubsub = new PubSub({
+      projectId: process.env.GCP_PROJECT_ID || 'myvista-dev',
+      ...(process.env.PUBSUB_EMULATOR_HOST && {
+        apiEndpoint: process.env.PUBSUB_EMULATOR_HOST
+      })
+    });
+
+    const subscriber = new AgentSubscriber(pubsub);
+    await subscriber.start();
+    console.log('✓ Pub/Sub subscriber initialized');
 
     // Start server
     app.listen(config.server.port, () => {

@@ -49,7 +49,8 @@ export class AgentSubscriber {
   private async handleMessage(message: Message): Promise<void> {
     try {
       const data = JSON.parse(message.data.toString());
-      console.log('[Subscriber] Received task:', data);
+      console.log('[Subscriber] ====== DEBUG: Full Pub/Sub Message ======');
+      console.log('[Subscriber] Raw message data:', JSON.stringify(data, null, 2));
 
       const {
         payload,
@@ -57,6 +58,12 @@ export class AgentSubscriber {
         userId,
         metadata,
       } = data;
+
+      console.log('[Subscriber] ====== DEBUG: Extracted Fields ======');
+      console.log('[Subscriber] sessionId:', sessionId);
+      console.log('[Subscriber] userId:', userId);
+      console.log('[Subscriber] metadata:', JSON.stringify(metadata, null, 2));
+      console.log('[Subscriber] payload:', JSON.stringify(payload, null, 2));
 
       // Extract user context from payload
       const userContext = payload?.userContext || {
@@ -67,7 +74,10 @@ export class AgentSubscriber {
       const query = payload?.query || payload?.parameters?.query;
 
       // Log user context for debugging
-      console.log('[Subscriber] User context:', {
+      console.log('[Subscriber] ====== DEBUG: UserContext Extraction ======');
+      console.log('[Subscriber] payload.userContext exists?', !!payload?.userContext);
+      console.log('[Subscriber] Extracted userContext:', JSON.stringify(userContext, null, 2));
+      console.log('[Subscriber] User context summary:', {
         isAuthenticated: userContext.isAuthenticated,
         fullName: userContext.fullName || 'Guest',
         email: userContext.email ? '***@***' : 'None',
@@ -100,11 +110,18 @@ export class AgentSubscriber {
         };
 
         // Log thread_id for debugging conversation memory
+        console.log('[Subscriber] ====== THREAD ID DEBUG ======');
+        console.log(`[Subscriber] thread_id: ${sessionId || 'UNDEFINED'}`);
+        console.log(`[Subscriber] userId: ${userId || 'UNDEFINED'}`);
+        console.log(`[Subscriber] correlationId: ${correlationId}`);
+
         if (sessionId) {
-          console.log(`[Subscriber] ✓ Processing with thread_id: ${sessionId}`);
+          console.log(`[Subscriber] ✓ Checkpointer will load/save conversation for: ${sessionId}`);
         } else {
-          console.warn(`[Subscriber] ⚠️  No sessionId in message - thread_id will be undefined!`);
+          console.warn(`[Subscriber] ⚠️  WARNING: No sessionId - conversation will NOT persist!`);
         }
+
+        console.log('[Subscriber] ============================');
 
         let stepNumber = 1;
 
@@ -112,20 +129,50 @@ export class AgentSubscriber {
         const messageIds = new Map<string, string>();
         const chatModelNodes = new Set<string>(); // Track which nodes are chat models
 
+        // Prepare initial state
+        const initialState = {
+          message: query,
+          toolResults: {},
+          retryCount: 0,
+          maxRetries: 3,
+          metadata: {
+            sessionId,
+            userId,
+            correlationId,
+            userContext,
+          },
+        };
+
+        console.log('[Subscriber] ====== DEBUG: Graph Invocation ======');
+        console.log('[Subscriber] Initial state being passed to graph:', JSON.stringify(initialState, null, 2));
+        console.log('[Subscriber] Config being passed to graph:', JSON.stringify(config, null, 2));
+
+        // Check if checkpointer will load previous state
+        try {
+          const checkpointer = graph.checkpointer;
+          if (checkpointer && sessionId) {
+            console.log('[Subscriber] ✓ Checkpointer is configured - attempting to load previous state...');
+            const checkpoint = await checkpointer.get({ configurable: { thread_id: sessionId } });
+            if (checkpoint) {
+              console.log('[Subscriber] ✓ Found checkpoint for this thread_id!');
+              console.log(`[Subscriber] Checkpoint channel values:`, Object.keys(checkpoint.channel_values));
+              if (checkpoint.channel_values.messages) {
+                console.log(`[Subscriber] Previous message count: ${checkpoint.channel_values.messages.length}`);
+              }
+            } else {
+              console.log('[Subscriber] No previous checkpoint found - this is a new conversation');
+            }
+          } else {
+            console.log('[Subscriber] ⚠️  Checkpointer not configured or no sessionId');
+          }
+        } catch (checkpointError) {
+          console.log('[Subscriber] Could not check previous state:', checkpointError.message);
+        }
+        console.log('[Subscriber] =======================================');
+
         // Use streamEvents() to get token-level streaming from LLM
         const streamEvents = graph.streamEvents(
-          {
-            message: query,
-            toolResults: {},
-            retryCount: 0,
-            maxRetries: 3,
-            metadata: {
-              sessionId,
-              userId,
-              correlationId,
-              userContext,
-            },
-          },
+          initialState,
           {
             ...config,
             version: 'v2',

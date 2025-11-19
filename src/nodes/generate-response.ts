@@ -12,12 +12,21 @@ import { createResponseModel } from "../models/openai.js";
 export async function generateResponseNode(state: AgentStateType): Promise<Partial<AgentStateType>> {
   console.log('\n[GenerateResponse] Creating final response...');
 
+  console.log('[GenerateResponse] ====== DEBUG: State Received ======');
+  console.log('[GenerateResponse] state.metadata exists?', !!state.metadata);
+  console.log('[GenerateResponse] state.metadata:', JSON.stringify(state.metadata, null, 2));
+  console.log('[GenerateResponse] state.userContext exists?', !!state.userContext);
+  console.log('[GenerateResponse] state.userContext:', JSON.stringify(state.userContext, null, 2));
+
   // Extract user context for personalization
   const userContext = state.metadata?.userContext || state.userContext || { isAuthenticated: false };
   const userName = userContext.fullName || 'there';
   const firstName = userName.split(' ')[0]; // Use first name only for familiarity
   const isAuthenticated = userContext.isAuthenticated || false;
 
+  console.log('[GenerateResponse] ====== DEBUG: UserContext Extraction ======');
+  console.log('[GenerateResponse] Using userContext from:', state.metadata?.userContext ? 'metadata' : (state.userContext ? 'state' : 'default'));
+  console.log('[GenerateResponse] Final userContext:', JSON.stringify(userContext, null, 2));
   console.log(`[GenerateResponse] Personalizing for: ${firstName} (auth=${isAuthenticated})`);
 
   try {

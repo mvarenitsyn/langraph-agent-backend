@@ -23,6 +23,7 @@
     "openai"
   ],
   "dependencies": {
+    "@google-cloud/pubsub": "^5.2.0",
     "@langchain/core": "^1.0.3",
     "@langchain/langgraph": "^1.0.1",
     "@langchain/langgraph-checkpoint-postgres": "^1.0.0",

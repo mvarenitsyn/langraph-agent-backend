@@ -96,6 +96,28 @@ async function emitUIEventsForTool(
       console.log(`[ToolsNode] Emitted UI event for searchId: ${content.searchId}`);
     }
 
+    // Handle property_filter_sort tool results
+    if (toolName === 'property_filter_sort' && content.success && content.searchId) {
+      // Extract filtered count from limited response
+      const filteredCount = content.count || 0;
+      const originalCount = content.metadata?.propertiesCount || 0;
+
+      await uiEventPublisher.publishUIEvent({
+        renderType: 'search_filtered',
+        data: {
+          searchId: content.searchId,
+          filteredCount: filteredCount,
+          originalCount: originalCount,
+          executionTimeMs: content.executionTimeMs || 0,
+        },
+        sessionId,
+        userId,
+        correlationId,
+      });
+
+      console.log(`[ToolsNode] Emitted filtered UI event for searchId: ${content.searchId}, filtered: ${filteredCount} of ${originalCount}`);
+    }
+
     // Future: Add more tool-specific UI event handlers here
     // if (toolName === 'generate_cma' && content.success && content.cmaId) { ... }
     // if (toolName === 'property_get_details' && content.success) { ... }

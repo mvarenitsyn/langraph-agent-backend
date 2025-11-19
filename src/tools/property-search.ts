@@ -106,20 +106,23 @@ export const propertySearchTool = new DynamicStructuredTool({
   name: "property_search",
   description: `Search for properties using natural language queries.
 
-  This tool returns a summary of matching properties and a searchToken that users can use to view results on an interactive map.
-
+  This tool returns a summary of matching properties, a searchToken for viewing on the map, and the odataFilter used for the search.
 
 Examples:
 - "2 bedroom condos in Miami under 500k"
 - "luxury homes in Aventura"
 - "waterfront properties in Miami Beach"
 
-The tool returns the total count and a searchToken for viewing results on the map.`,
+The tool returns the total count, searchToken, and odataFilter. On retries, you can modify the odataFilter to adjust search criteria (e.g., expand status filters to include pending/sold listings).`,
   schema: z.object({
     query: z.string().describe("Natural language property search query (e.g., '2 bedroom condos in Miami under 500k')"),
+    odataFilter: z.string().optional().describe("Optional: Modified OData filter string from previous search. When provided, this bypasses the DirectMapper and uses the filter directly. Use this on retries to expand status filters or adjust search criteria."),
   }),
-  func: async ({ query }, config) => {
+  func: async ({ query, odataFilter }, config) => {
     console.log(`[PropertySearchTool] Searching: "${query}"`);
+    if (odataFilter) {
+      console.log(`[PropertySearchTool] Using modified OData filter (retry optimization): ${odataFilter}`);
+    }
 
     // Extract sessionId, userId, and userContext from config metadata (injected by custom ToolNode)
     const sessionId = (config as any)?.metadata?.sessionId;
@@ -136,12 +139,16 @@ The tool returns the total count and a searchToken for viewing results on the ma
       console.log('[PropertySearchTool] 🚀 DEBUG: ABOUT TO MAKE FETCH CALL');
       console.log('[PropertySearchTool] 🚀 DEBUG: URL: https://localhost:3001/api/search');
       console.log('[PropertySearchTool] 🚀 DEBUG: Method: POST');
-      console.log('[PropertySearchTool] 🚀 DEBUG: Body:', JSON.stringify({
+      const requestBody: any = {
         query,
         excludeProperties: true,
         userId,
         sessionId,
-      }, null, 2));
+      };
+      if (odataFilter) {
+        requestBody.odataFilter = odataFilter;
+      }
+      console.log('[PropertySearchTool] 🚀 DEBUG: Body:', JSON.stringify(requestBody, null, 2));
 
       // Create HTTPS agent that bypasses SSL verification for localhost
       const httpsAgent = new https.Agent({
@@ -156,12 +163,7 @@ The tool returns the total count and a searchToken for viewing results on the ma
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          query,
-          excludeProperties: true, // Always true - we only need metadata + searchToken
-          userId,
-          sessionId,
-        }),
+        body: JSON.stringify(requestBody),
         // @ts-ignore - Node.js fetch supports agent option
         agent: httpsAgent,
       });
@@ -173,6 +175,35 @@ The tool returns the total count and a searchToken for viewing results on the ma
 
       if (!response.ok) {
         console.error('[PropertySearchTool] ❌ DEBUG: API ERROR - status not ok');
+        const errorData = await response.json().catch(() => ({}));
+
+        // 400 = Validation error - tell agent to simplify query
+        if (response.status === 400) {
+          console.error('[PropertySearchTool] ❌ OData validation error:', errorData);
+          return JSON.stringify({
+            success: false,
+            summary: `Search criteria validation failed: ${errorData.error || 'Invalid filter'}.
+Try simplifying your search - use fewer criteria, broader location, or remove complex filters.`,
+            validationError: true,
+            odataFilter: errorData.trestleError?.odataFilter,
+            error: errorData.error,
+            trestleError: errorData.trestleError
+          });
+        }
+
+        // 401 = Auth error - tell agent to retry
+        if (response.status === 401) {
+          console.error('[PropertySearchTool] ❌ Auth error:', errorData);
+          return JSON.stringify({
+            success: false,
+            summary: 'Authentication error. Please retry your search.',
+            authError: true,
+            error: 'AUTH_ERROR',
+            trestleError: errorData.trestleError
+          });
+        }
+
+        // 500 or other = Real failure - throw to trigger agent error handling
         throw new Error(`API returned ${response.status}: ${response.statusText}`);
       }
 
@@ -183,13 +214,14 @@ The tool returns the total count and a searchToken for viewing results on the ma
       // Build summary for LLM
       const summary = buildSearchSummary(data);
 
-      // Return structured data
+      // Return structured data including odataFilter for potential retries
       return JSON.stringify({
         success: data.success,
         summary,
         totalCount: data.data?.totalCount || 0,
         searchId: data.data?.searchId || null, // UUID v4 for retrieving search results
         searchToken: data.data?.searchToken || null, // Shareable token
+        odataFilter: data.data?.query.odataFilter || null, // OData filter for retry optimization
         mapLink: data.data?.searchId
           ? `Properties are now displayed on the interactive map (searchId: ${data.data.searchId})`
           : null,
