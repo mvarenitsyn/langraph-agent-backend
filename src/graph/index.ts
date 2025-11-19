@@ -1,9 +1,10 @@
 import { StateGraph, START, END } from "@langchain/langgraph";
-import { AIMessage } from "@langchain/core/messages";
 import { AgentState } from "../types/state.js";
 import { routerNode } from "../nodes/router.js";
-import { createToolsNode } from "../nodes/tools.js";
-import { generateResponseNode } from "../nodes/generate-response.js";
+import { propertySearchNode } from "../nodes/property-search.js";
+import { propertyFilterSortNode } from "../nodes/property-filter-sort.js";
+import { propertyOperationsNode } from "../nodes/property-operations.js";
+import { perplexitySearchNode } from "../nodes/perplexity-search.js";
 import { createCheckpointer } from "../checkpointer/index.js";
 import { initializeTools } from "../tools/index.js";
 
@@ -12,73 +13,90 @@ import { initializeTools } from "../tools/index.js";
 initializeTools();
 
 /**
- * Simplified LangGraph Agent - ReAct Pattern Only
+ * ULTRA-SIMPLIFIED LangGraph Agent - Each Node Generates Own Response
  *
  * Graph structure:
- * START → agent → [conditional:
- *   - If tool_calls exist → tools → agent (loop back to process results)
- *   - If no tool_calls → generate_response → END
+ * START → router → [conditional:
+ *   - If property query → property_search → END
+ *   - If filter/sort query → property_filter_sort → END (LEGACY - being deprecated)
+ *   - If property operations → property_operations → END (NEW)
+ *   - If research query → perplexity_search → END
+ *   - Otherwise → END (router generated response)
  * ]
  *
  * Key simplifications:
- * - Agent ONLY decides which tools to call (no text generation)
- * - generate_response is the ONLY node that creates final user-facing text
- * - No parallel execution, no reflection, no retry, no fast-path
- * - Linear flow: agent → tools → agent → generate_response → END
+ * - Router uses LLM to decide: generate response OR call specialized tool nodes
+ * - property_search: MLS property search with tool loop
+ * - property_filter_sort: Filter/sort existing search results with tool loop (LEGACY)
+ * - property_operations: Multi-tool agent (filter, get_results, get_details) with flexible execution (NEW)
+ * - perplexity_search: Web research with tool loop
+ * - Each node generates its own final response
+ * - NO separate generate_response node
+ * - NO LOOPS at graph level, only within specialized nodes
  */
 
 /**
- * Simple routing function from agent node
- * Decides whether to call tools or generate final response
+ * Simple routing function from router node
+ * Routes based on metadata flags set by router
  */
-function routeAfterAgent(state: typeof AgentState.State) {
-  const messages = state.messages || [];
-  const lastMessage = messages[messages.length - 1];
+function routeAfterRouter(state: typeof AgentState.State) {
+  const shouldSearchProperties = state.metadata?.shouldSearchProperties || false;
+  const shouldFilterProperties = state.metadata?.shouldFilterProperties || false;
+  const shouldUsePropertyOperations = state.metadata?.shouldUsePropertyOperations || false;
+  const shouldSearchPerplexity = state.metadata?.shouldSearchPerplexity || false;
 
-  console.log(`[Graph] Checking last message type: ${lastMessage?._getType()}, total messages: ${messages.length}`);
-
-  const hasToolCalls = lastMessage?._getType() === 'ai' &&
-                       (lastMessage as AIMessage)?.tool_calls &&
-                       (lastMessage as AIMessage).tool_calls.length > 0;
-
-  if (hasToolCalls) {
-    console.log(`[Graph] Tool calls found: ${(lastMessage as AIMessage).tool_calls.map(tc => tc.name).join(', ')} → Routing to tools`);
-    return "tools";
+  if (shouldSearchProperties) {
+    console.log(`[Graph] Routing to property_search`);
+    return "property_search";
   }
 
-  // No tool calls - generate final response
-  console.log(`[Graph] No tool calls → Routing to generate_response`);
-  return "generate_response";
+  if (shouldUsePropertyOperations) {
+    console.log(`[Graph] Routing to property_operations`);
+    return "property_operations";
+  }
+
+  if (shouldFilterProperties) {
+    console.log(`[Graph] Routing to property_filter_sort (legacy)`);
+    return "property_filter_sort";
+  }
+
+  if (shouldSearchPerplexity) {
+    console.log(`[Graph] Routing to perplexity_search`);
+    return "perplexity_search";
+  }
+
+  // Router already generated response - go to END
+  console.log(`[Graph] Router generated response - going to END`);
+  return END;
 }
 
 export async function createAgentGraph() {
-  console.log('[Graph] Building simplified LangGraph agent with ReAct pattern...');
+  console.log('[Graph] Building ultra-simplified LangGraph agent...');
 
-  // Create the tools node
-  const toolsNode = createToolsNode();
-
-  // Create the state graph - SIMPLIFIED VERSION
+  // Create the state graph - NO TOOL LOOP AT GRAPH LEVEL
   const workflow = new StateGraph(AgentState)
-    // Add only 3 nodes: agent, tools, generate_response
-    .addNode("agent", routerNode)
-    .addNode("tools", toolsNode)
-    .addNode("generate_response", generateResponseNode)
+    // Add 5 nodes: router, property_search, property_filter_sort, property_operations, perplexity_search
+    .addNode("router", routerNode)
+    .addNode("property_search", propertySearchNode)
+    .addNode("property_filter_sort", propertyFilterSortNode)
+    .addNode("property_operations", propertyOperationsNode)
+    .addNode("perplexity_search", perplexitySearchNode)
 
     // Add edges
-    .addEdge(START, "agent")
+    .addEdge(START, "router")
 
-    // Conditional edge from agent: tools or generate_response
+    // Conditional edge from router: property_search, property_filter_sort, property_operations, perplexity_search, or END
     .addConditionalEdges(
-      "agent",
-      routeAfterAgent,
-      ["tools", "generate_response"]
+      "router",
+      routeAfterRouter,
+      ["property_search", "property_filter_sort", "property_operations", "perplexity_search", END]
     )
 
-    // After tools execute, loop back to agent to process results
-    .addEdge("tools", "agent")
-
-    // Final response goes to END
-    .addEdge("generate_response", END);
+    // After specialized nodes, go to END (they generate their own responses)
+    .addEdge("property_search", END)
+    .addEdge("property_filter_sort", END)
+    .addEdge("property_operations", END)
+    .addEdge("perplexity_search", END);
 
   // Initialize checkpointer
   const checkpointer = await createCheckpointer();
@@ -88,7 +106,7 @@ export async function createAgentGraph() {
     checkpointer,
   });
 
-  console.log(`[Graph] ✓ Simplified agent graph compiled with 3 nodes and PostgreSQL checkpointer`);
+  console.log(`[Graph] ✓ Ultra-simplified agent graph compiled with 5 nodes (router + 4 specialized agents)`);
 
   return graph;
 }

@@ -89,7 +89,7 @@ Property fields available:
 The tool returns a summary with essential fields only. Frontend displays full results.`,
 
   schema: z.object({
-    searchId: z.string().describe("UUID of the search result to filter/sort (from previous property_search call)"),
+    searchId: z.string().optional().describe("UUID of the search result to filter/sort. OPTIONAL - will be auto-injected from active search session if not provided."),
     code: z.string().describe("JavaScript code to execute. MUST return a value (use 'return' statement). Available context: properties array, console, Math, Date, JSON."),
     saveResults: z.boolean().default(true).describe("Whether to save filtered results to database and send to frontend (default: true)")
   }),
@@ -243,7 +243,7 @@ Plus 40+ more MLS fields!
 To find a property's ListingKey, first use property_get_results to see available properties.`,
 
   schema: z.object({
-    searchId: z.string().describe("UUID of the search result containing the property"),
+    searchId: z.string().optional().describe("UUID of the search result containing the property. OPTIONAL - will be auto-injected from active search session if not provided."),
     listingKey: z.string().optional().describe("Property's ListingKey for exact match (preferred method)"),
     address: z.string().optional().describe("Property address for fuzzy matching (alternative to listingKey)"),
     fields: z.array(z.string()).optional().describe("Optional: specific fields to return (e.g., ['YearBuilt', 'PoolYN']). If omitted, returns ALL fields.")
@@ -433,7 +433,7 @@ The response includes:
 Frontend always has access to full property data via the same searchId.`,
 
   schema: z.object({
-    searchId: z.string().describe("UUID of the search result to retrieve"),
+    searchId: z.string().optional().describe("UUID of the search result to retrieve. OPTIONAL - will be auto-injected from active search session if not provided."),
     includeFiltered: z.boolean().default(true).describe("Whether to include filtered results if available (default: true)")
   }),
 

@@ -9,7 +9,6 @@ import { propertySearchTool, propertyDetailsTool } from "./property-search.js";
 import { perplexitySearchTool } from "./perplexity-search.js";
 import { propertyFilterSortTool, propertyGetResultsTool, propertyGetDetailsTool } from "./property-operations.js";
 import { addressValidatorTool } from "./address-validator.js";
-import { trestleMetadataExplorerTool } from "./trestle-metadata-explorer.js";
 
 /**
  * Initialize and register all tools
@@ -32,9 +31,6 @@ export function initializeTools() {
   // Register address validator tool
   globalToolsRegistry.register(addressValidatorTool);
 
-  // Register Trestle metadata explorer tool
-  globalToolsRegistry.register(trestleMetadataExplorerTool);
-
   const stats = globalToolsRegistry.getStats();
   console.log(`[Tools] ✓ Registered ${stats.totalTools} tools: ${stats.toolNames.join(', ')}`);
 
@@ -47,4 +43,3 @@ export { propertySearchTool, propertyDetailsTool } from "./property-search.js";
 export { propertyFilterSortTool, propertyGetResultsTool, propertyGetDetailsTool } from "./property-operations.js";
 export { perplexitySearchTool } from "./perplexity-search.js";
 export { addressValidatorTool } from "./address-validator.js";
-export { trestleMetadataExplorerTool } from "./trestle-metadata-explorer.js";

@@ -38,7 +38,7 @@ export function createToolCallingModel(maxTokens?: number) {
     apiKey: config.openai.apiKey,
     model: config.openai.model,
     temperature,
-    streaming: true,
+    streaming: false, // Disabled to prevent verbose acknowledgement messages in property_operations
     maxTokens: maxTokens ?? config.tokenLimits.router,
     timeout: config.timeouts.model,
   });

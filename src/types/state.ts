@@ -3,12 +3,76 @@ import { BaseMessage } from "@langchain/core/messages";
 
 /**
  * User Context for personalization
- * Received from frontend/backend with authentication and profile info
+ * Comprehensive user profile with all related data
  */
 export interface UserContext {
-  isAuthenticated?: boolean;
+  // Authentication status
+  isAuthenticated: boolean;
+
+  // Basic user profile (from users table)
+  userId?: string;
   fullName?: string;
+  firstName?: string;
+  lastName?: string;
   email?: string;
+  phone?: string;
+  licenseNumber?: string;
+  licenseState?: string;
+  memberKey?: string;
+  memberMlsId?: string;
+  officeKey?: string;
+  officeName?: string;
+  profilePicture?: string;
+  bio?: string;
+  website?: string;
+  status?: string;
+
+  // Related data counts
+  linkedListingsCount?: number;
+  collectionsCount?: number;
+  cmasCount?: number;
+  showingsCount?: number;
+
+  // Related data (detailed)
+  listings?: Array<{
+    listingId: string;
+    linkedAt: string;
+    linkedVia: string;
+    isActive: boolean;
+    listingData?: any;
+  }>;
+
+  collections?: Array<{
+    id: string;
+    title: string;
+    description?: string;
+    propertiesCount: number;
+    createdAt: string;
+    updatedAt: string;
+  }>;
+
+  cmas?: Array<{
+    id: string;
+    jobId: string;
+    listingId: string;
+    status: string;
+    progressPercentage: number;
+    propertyAddress: string;
+    createdAt: string;
+    completedAt?: string;
+  }>;
+
+  showings?: Array<{
+    id: string;
+    propertyId?: string;
+    propertyAddress?: string;
+    scheduledAt?: string;
+    status: string;
+    requesterName?: string;
+    createdAt: string;
+  }>;
+
+  // Legacy fields (kept for backward compatibility)
   preferences?: Record<string, any>;
   searchHistory?: string[];
   savedProperties?: string[];

@@ -65,8 +65,6 @@ app.post('/chat', async (req: Request, res: Response) => {
         message: userMessage,
         // Don't reset messages - let LangGraph load from checkpoint
         toolResults: {},
-        retryCount: 0,
-        maxRetries: 3,
         metadata: {
           sessionId: threadId,
           userId: req.body.userId, // Optional: can be passed from client
@@ -137,7 +135,7 @@ app.post('/chat', async (req: Request, res: Response) => {
  */
 app.post('/chat/simple', async (req: Request, res: Response) => {
   // Support both 'message' (new) and 'query' (backward compatibility)
-  const { message, query, threadId = 'default-thread' } = req.body;
+  const { message, query, threadId = 'default-thread', metadata: clientMetadata } = req.body;
   const userMessage = message || query;
 
   if (!userMessage) {
@@ -156,12 +154,12 @@ app.post('/chat/simple', async (req: Request, res: Response) => {
         message: userMessage,
         // Don't reset messages - let LangGraph load from checkpoint
         toolResults: {},
-        retryCount: 0,
-        maxRetries: 3,
         metadata: {
           sessionId: threadId,
           userId: req.body.userId, // Optional: can be passed from client
           correlationId: randomUUID(),
+          // Merge client-provided metadata (e.g., searchId for testing)
+          ...(clientMetadata || {}),
         },
       },
       configurable

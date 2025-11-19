@@ -4,8 +4,9 @@ import {
   UIRenderEvent,
   PublishUIEventParams,
   PublishSearchResultsParams,
+  PublishPropertyDetailsParams,
 } from '../types/ui-events';
-import { config } from '../config';
+import { config } from '../config/index.js';
 
 /**
  * UI Event Publisher
@@ -75,6 +76,27 @@ export class UIEventPublisher {
         totalCount: params.totalCount,
         searchToken: params.searchToken,
         mapLink: params.mapLink,
+      },
+      sessionId: params.sessionId,
+      userId: params.userId,
+      correlationId: params.correlationId,
+    });
+  }
+
+  /**
+   * Convenience method for publishing property details
+   *
+   * @param params - Property details parameters
+   */
+  async publishPropertyDetails(
+    params: PublishPropertyDetailsParams
+  ): Promise<void> {
+    await this.publishUIEvent({
+      renderType: 'property_details',
+      data: {
+        searchId: params.searchId,
+        listingKey: params.listingKey,
+        property: params.property,
       },
       sessionId: params.sessionId,
       userId: params.userId,

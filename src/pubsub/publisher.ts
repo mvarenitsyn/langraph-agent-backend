@@ -176,4 +176,39 @@ export class AgentPublisher {
       console.warn('[Publisher] Failed to publish tool status (non-fatal):', error instanceof Error ? error.message : String(error));
     }
   }
+
+  /**
+   * Publish progress status update (for real-time "thinking" indicator)
+   * Shows concise status messages that update in place on the frontend
+   */
+  async publishProgressUpdate(data: {
+    sessionId: string;
+    userId?: string;
+    correlationId?: string;
+    status: string;  // Concise status (max 10 words): "Analyzing query...", "Filtering 50 properties..."
+  }): Promise<void> {
+    try {
+      const topic = this.pubsub.topic('agent.progress.update');
+
+      const message = {
+        type: 'agent.progress.update',
+        timestamp: new Date().toISOString(),
+        source: 'agent',
+        sessionId: data.sessionId,
+        userId: data.userId,
+        payload: {
+          status: data.status,
+        },
+        metadata: {
+          correlationId: data.correlationId || `progress-${Date.now()}`,
+        },
+      };
+
+      await topic.publishMessage({ json: message });
+      console.log(`[Publisher] Progress: ${data.status}`);
+    } catch (error) {
+      // Non-fatal - don't block execution
+      console.warn('[Publisher] Failed to publish progress (non-fatal):', error instanceof Error ? error.message : String(error));
+    }
+  }
 }

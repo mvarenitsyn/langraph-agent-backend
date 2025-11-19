@@ -55,3 +55,24 @@ export interface PublishSearchResultsParams {
   userId?: string;
   correlationId: string;
 }
+
+/**
+ * Payload for property details rendering
+ */
+export interface PropertyDetailsPayload {
+  searchId: string;
+  listingKey: string;
+  property?: any; // Optional: include full property data to avoid extra fetch
+}
+
+/**
+ * Parameters for publishing property details
+ */
+export interface PublishPropertyDetailsParams {
+  searchId: string;
+  listingKey: string;
+  property?: any;
+  sessionId: string;
+  userId?: string;
+  correlationId: string;
+}

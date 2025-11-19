@@ -84,16 +84,17 @@ function buildSearchSummary(response: SearchAPIResponse): string {
     parts.push(`Listing type: For ${intentType}`);
   }
 
-  // Add searchId info (primary identifier for backend)
+  // Add searchId info (primary identifier for backend) - for debugging only
   if (searchId) {
-    parts.push(`\nSearch ID: ${searchId}`);
-    parts.push(`(Properties are now displayed on the interactive map)`);
+    parts.push(`\n(Properties are now displayed on the interactive map)`);
   }
 
-  // Add searchToken info (for sharing)
+  // Add shareable link (for sharing search results)
   if (searchToken) {
-    parts.push(`\nShare Token: ${searchToken}`);
-    parts.push(`(Users can share this token to view the same results)`);
+    // Use environment variable or fallback to production URL
+    const frontendUrl = process.env.FRONTEND_URL || process.env.NEXT_PUBLIC_BACKEND_URL || 'https://myvista.co';
+    const shareUrl = `${frontendUrl}/search/${searchToken}`;
+    parts.push(`\n🔗 Share this search: ${shareUrl}`);
   }
 
   return parts.join('\n');
@@ -106,23 +107,21 @@ export const propertySearchTool = new DynamicStructuredTool({
   name: "property_search",
   description: `Search for properties using natural language queries.
 
-  This tool returns a summary of matching properties, a searchToken for viewing on the map, and the odataFilter used for the search.
+This tool uses the backend's Direct Trestle Mapper to automatically generate precise OData filters from natural language.
+
+The backend automatically handles zero-result searches with a 2-tier retry strategy:
+- Tier 1: Remove StandardStatus filter to include all property statuses
+- Tier 2: Keep only core location fields (StreetNumber, StreetName, UnitNumber, City, PostalCode)
 
 Examples:
 - "2 bedroom condos in Miami under 500k"
 - "luxury homes in Aventura"
-- "waterfront properties in Miami Beach"
-
-The tool returns the total count, searchToken, and odataFilter. On retries, you can modify the odataFilter to adjust search criteria (e.g., expand status filters to include pending/sold listings).`,
+- "waterfront properties in Miami Beach"`,
   schema: z.object({
     query: z.string().describe("Natural language property search query (e.g., '2 bedroom condos in Miami under 500k')"),
-    odataFilter: z.string().optional().describe("Optional: Modified OData filter string from previous search. When provided, this bypasses the DirectMapper and uses the filter directly. Use this on retries to expand status filters or adjust search criteria."),
   }),
-  func: async ({ query, odataFilter }, config) => {
+  func: async ({ query }, config) => {
     console.log(`[PropertySearchTool] Searching: "${query}"`);
-    if (odataFilter) {
-      console.log(`[PropertySearchTool] Using modified OData filter (retry optimization): ${odataFilter}`);
-    }
 
     // Extract sessionId, userId, and userContext from config metadata (injected by custom ToolNode)
     const sessionId = (config as any)?.metadata?.sessionId;
@@ -145,9 +144,6 @@ The tool returns the total count, searchToken, and odataFilter. On retries, you 
         userId,
         sessionId,
       };
-      if (odataFilter) {
-        requestBody.odataFilter = odataFilter;
-      }
       console.log('[PropertySearchTool] 🚀 DEBUG: Body:', JSON.stringify(requestBody, null, 2));
 
       // Create HTTPS agent that bypasses SSL verification for localhost
@@ -182,12 +178,12 @@ The tool returns the total count, searchToken, and odataFilter. On retries, you 
           console.error('[PropertySearchTool] ❌ OData validation error:', errorData);
           return JSON.stringify({
             success: false,
-            summary: `Search criteria validation failed: ${errorData.error || 'Invalid filter'}.
+            summary: `Search criteria validation failed: ${(errorData as any).error || 'Invalid filter'}.
 Try simplifying your search - use fewer criteria, broader location, or remove complex filters.`,
             validationError: true,
-            odataFilter: errorData.trestleError?.odataFilter,
-            error: errorData.error,
-            trestleError: errorData.trestleError
+            odataFilter: (errorData as any).trestleError?.odataFilter,
+            error: (errorData as any).error,
+            trestleError: (errorData as any).trestleError
           });
         }
 
@@ -199,7 +195,7 @@ Try simplifying your search - use fewer criteria, broader location, or remove co
             summary: 'Authentication error. Please retry your search.',
             authError: true,
             error: 'AUTH_ERROR',
-            trestleError: errorData.trestleError
+            trestleError: (errorData as any).trestleError
           });
         }
 

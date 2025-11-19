@@ -52,10 +52,25 @@ export class AgentSubscriber {
       console.log('[Subscriber] ====== DEBUG: Full Pub/Sub Message ======');
       console.log('[Subscriber] Raw message data:', JSON.stringify(data, null, 2));
 
+      // Fallback defaults for direct testing (curl without full payload)
+      const TEST_FALLBACKS = {
+        searchId: '088d4b7f-016b-480f-abd5-92d5b9cca85f',  // Default test searchId for follow-up testing
+        userId: '12345678',  // Default test userId
+        sessionId: `test-session-${Date.now()}`,  // Generate unique session for each test
+        userContext: {
+          isAuthenticated: true,
+          fullName: 'Test User',
+          email: 'test@example.com',
+          userId: '12345678',
+          linkedListingsCount: 6,
+          collectionsCount: 10,
+        }
+      };
+
       const {
         payload,
-        sessionId,
-        userId,
+        sessionId = TEST_FALLBACKS.sessionId,
+        userId = TEST_FALLBACKS.userId,
         metadata,
       } = data;
 
@@ -65,13 +80,20 @@ export class AgentSubscriber {
       console.log('[Subscriber] metadata:', JSON.stringify(metadata, null, 2));
       console.log('[Subscriber] payload:', JSON.stringify(payload, null, 2));
 
-      // Extract user context from payload
-      const userContext = payload?.userContext || {
-        isAuthenticated: false,
-      };
+      // Extract user context from payload with TEST_FALLBACKS as default
+      const userContext = payload?.userContext || TEST_FALLBACKS.userContext;
 
       const correlationId = metadata?.correlationId || `task-${Date.now()}`;
       const query = payload?.query || payload?.parameters?.query;
+      // Only use explicit searchId from payload (no fallback to prevent incorrect routing)
+      const searchId = payload?.searchId || payload?.parameters?.searchId;
+
+      console.log('[Subscriber] ====== DEBUG: Query & SearchId Extraction ======');
+      console.log('[Subscriber] query:', query);
+      console.log('[Subscriber] payload.searchId:', payload?.searchId || 'NOT FOUND');
+      console.log('[Subscriber] payload.parameters:', JSON.stringify(payload?.parameters || {}, null, 2));
+      console.log('[Subscriber] payload.parameters.searchId:', payload?.parameters?.searchId || 'NOT FOUND');
+      console.log('[Subscriber] FINAL searchId:', searchId || 'NONE');
 
       // Log user context for debugging
       console.log('[Subscriber] ====== DEBUG: UserContext Extraction ======');
@@ -140,6 +162,9 @@ export class AgentSubscriber {
             userId,
             correlationId,
             userContext,
+            searchId: searchId || undefined,      // ✅ Current search ID (from parameters or latest property_search)
+            incomingSearchId: searchId || undefined,  // 🚨 FIX: Fresh searchId that won't be overwritten by checkpoint
+            lastSearchId: undefined,              // Previous search ID (for reference)
           },
         };
 
@@ -150,14 +175,14 @@ export class AgentSubscriber {
         // Check if checkpointer will load previous state
         try {
           const checkpointer = graph.checkpointer;
-          if (checkpointer && sessionId) {
+          if (checkpointer && checkpointer !== true && sessionId) {
             console.log('[Subscriber] ✓ Checkpointer is configured - attempting to load previous state...');
             const checkpoint = await checkpointer.get({ configurable: { thread_id: sessionId } });
             if (checkpoint) {
               console.log('[Subscriber] ✓ Found checkpoint for this thread_id!');
               console.log(`[Subscriber] Checkpoint channel values:`, Object.keys(checkpoint.channel_values));
-              if (checkpoint.channel_values.messages) {
-                console.log(`[Subscriber] Previous message count: ${checkpoint.channel_values.messages.length}`);
+              if (checkpoint.channel_values.messages && Array.isArray(checkpoint.channel_values.messages)) {
+                console.log(`[Subscriber] Previous message count: ${(checkpoint.channel_values.messages as any[]).length}`);
               }
             } else {
               console.log('[Subscriber] No previous checkpoint found - this is a new conversation');
