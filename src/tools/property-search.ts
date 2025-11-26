@@ -107,6 +107,14 @@ export const propertySearchTool = new DynamicStructuredTool({
   name: "property_search",
   description: `Search for properties using natural language queries.
 
+⚠️ IMPORTANT: This tool returns a searchId that you MUST use for follow-up operations:
+- Use the searchId from this tool's response to call property_get_details for full property data
+- The searchId is saved in the database and can be used for filtering/sorting operations
+
+WORKFLOW:
+1. Call property_search with user's query → get searchId + property count
+2. Use searchId to call property_get_details for full details of specific properties
+
 This tool uses the backend's Direct Trestle Mapper to automatically generate precise OData filters from natural language.
 
 The backend automatically handles zero-result searches with a 2-tier retry strategy:
@@ -116,7 +124,8 @@ The backend automatically handles zero-result searches with a 2-tier retry strat
 Examples:
 - "2 bedroom condos in Miami under 500k"
 - "luxury homes in Aventura"
-- "waterfront properties in Miami Beach"`,
+- "waterfront properties in Miami Beach"
+- "2651 S Course Dr 307, Pompano Beach, FL, 33069"`,
   schema: z.object({
     query: z.string().describe("Natural language property search query (e.g., '2 bedroom condos in Miami under 500k')"),
   }),

@@ -89,15 +89,8 @@ export class AgentPublisher {
     isComplete?: boolean;
   }): Promise<void> {
     try {
-      // Get topic reference without metadata caching
+      // Get topic reference (topic should exist at startup)
       const topic = this.pubsub.topic('agent.text.stream');
-
-      // Ensure topic exists (bypasses cache issues)
-      const [exists] = await topic.exists();
-      if (!exists) {
-        console.log('[Publisher] Creating agent.text.stream topic...');
-        await topic.create();
-      }
 
       const message = {
         type: 'agent.text.stream',
@@ -142,13 +135,6 @@ export class AgentPublisher {
   }): Promise<void> {
     try {
       const topic = this.pubsub.topic('agent.text.stream');
-
-      // Ensure topic exists
-      const [exists] = await topic.exists();
-      if (!exists) {
-        console.log('[Publisher] Creating agent.text.stream topic...');
-        await topic.create();
-      }
 
       const message = {
         type: 'agent.text.stream',

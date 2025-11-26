@@ -3,6 +3,7 @@ import { AgentStateType } from "../types/state.js";
 import { globalToolsRegistry } from "../tools/registry.js";
 import { createToolCallingModel, createResponseModel } from "../models/openai.js";
 import { uiEventPublisher } from "../pubsub/ui-event-publisher.js";
+import { sharedPublisher } from "../pubsub/shared.js";
 
 /**
  * Property Search Node - Mini Agent with Tool Loop
@@ -17,6 +18,14 @@ import { uiEventPublisher } from "../pubsub/ui-event-publisher.js";
  */
 export async function propertySearchNode(state: AgentStateType): Promise<Partial<AgentStateType>> {
   console.log('\n[PropertySearch] Starting property search agent...');
+
+  // Emit progress: Searching MLS
+  await sharedPublisher.publishProgressUpdate({
+    sessionId: state.metadata?.sessionId || '',
+    userId: state.metadata?.userId,
+    correlationId: state.metadata?.correlationId,
+    status: 'Searching MLS...',
+  });
 
   const userContext = state.userContext || { isAuthenticated: false };
   const userName = userContext.fullName || 'there';
@@ -132,7 +141,13 @@ You don't need to manage retries - just call property_search once and the backen
           }
 
           console.log(`[PropertySearch] Executing ${toolCall.name} with args:`, toolCall.args);
-          const result = await tool.invoke(toolCall.args);
+          const result = await tool.invoke(toolCall.args, {
+            metadata: {
+              sessionId: state.metadata?.sessionId,
+              userId: state.metadata?.userId,
+              userContext: state.userContext,
+            },
+          });
           const resultStr = typeof result === 'string' ? result : JSON.stringify(result);
 
           // Store result

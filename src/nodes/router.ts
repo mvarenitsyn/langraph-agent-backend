@@ -1,6 +1,6 @@
 import { AIMessage, HumanMessage, SystemMessage } from "@langchain/core/messages";
 import { AgentStateType } from "../types/state.js";
-import { createToolCallingModel } from "../models/openai.js";
+import { createToolCallingModel, createResponseModel } from "../models/openai.js";
 import { globalToolsRegistry } from "../tools/registry.js";
 import { getUserContextById } from "../utils/userContext.js";
 import { sharedPublisher } from "../pubsub/shared.js";
@@ -46,8 +46,11 @@ export async function routerNode(state: AgentStateType): Promise<Partial<AgentSt
   }
 
   try {
-    // Create model WITHOUT tools - router just decides via text analysis
-    const model = createToolCallingModel();
+    // Create model with streaming enabled for real-time response display
+    // Use createResponseModel() instead of createToolCallingModel() because:
+    // - createToolCallingModel has streaming: false (to prevent verbose acknowledgements in tool nodes)
+    // - createResponseModel has streaming: true (designed for final user-facing responses)
+    const model = createResponseModel();
 
     // Build rich system prompt with user context
     let systemPrompt = '';
@@ -248,6 +251,7 @@ Examples:
       status: 'Determining action...',
     });
 
+    // Use invoke() - streamEvents() will capture chunks automatically because model has streaming: true
     const response = await model.invoke(messages);
     const responseText = response.content as string;
 

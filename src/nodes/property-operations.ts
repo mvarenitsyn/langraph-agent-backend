@@ -5,6 +5,7 @@ import { AgentStateType } from "../types/state.js";
 import { globalToolsRegistry } from "../tools/registry.js";
 import { createToolCallingModel, createResponseModel } from "../models/openai.js";
 import { uiEventPublisher } from "../pubsub/ui-event-publisher.js";
+import { sharedPublisher } from "../pubsub/shared.js";
 
 /**
  * Property Operations Node - Multi-Tool Agent
@@ -23,6 +24,14 @@ import { uiEventPublisher } from "../pubsub/ui-event-publisher.js";
  */
 export async function propertyOperationsNode(state: AgentStateType): Promise<Partial<AgentStateType>> {
   console.log('\n[PropertyOperations] Starting property operations agent...');
+
+  // Emit progress: Preparing operation
+  await sharedPublisher.publishProgressUpdate({
+    sessionId: state.metadata?.sessionId || '',
+    userId: state.metadata?.userId,
+    correlationId: state.metadata?.correlationId,
+    status: 'Preparing operation...',
+  });
 
   try {
     console.log('[PropertyOperations] state.messages count:', state.messages?.length || 0);

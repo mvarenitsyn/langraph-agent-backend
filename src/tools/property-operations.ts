@@ -196,6 +196,13 @@ export const propertyGetDetailsTool = new DynamicStructuredTool({
   name: "property_get_details",
   description: `Get detailed information about a specific property from a search result.
 
+⚠️ PREREQUISITE: You MUST call property_search tool FIRST to get a searchId.
+This tool CANNOT work without a valid searchId from a prior search.
+
+WORKFLOW:
+1. First call: property_search with user's address/query → get searchId
+2. Then call: property_get_details with searchId + listingKey/address → get full details
+
 This tool retrieves FULL property details without truncation - perfect for when
 the user asks about a specific property.
 
@@ -240,12 +247,12 @@ Listing Info:
 
 Plus 40+ more MLS fields!
 
-To find a property's ListingKey, first use property_get_results to see available properties.`,
+REMINDER: Always call property_search first to get searchId before using this tool.`,
 
   schema: z.object({
-    searchId: z.string().optional().describe("UUID of the search result containing the property. OPTIONAL - will be auto-injected from active search session if not provided."),
-    listingKey: z.string().optional().describe("Property's ListingKey for exact match (preferred method)"),
-    address: z.string().optional().describe("Property address for fuzzy matching (alternative to listingKey)"),
+    searchId: z.string().optional().describe("UUID of the search result containing the property. REQUIRED (unless auto-injected). Get this by calling property_search tool first."),
+    listingKey: z.string().optional().describe("Property's ListingKey for exact match (preferred method). Get from property_search results."),
+    address: z.string().optional().describe("Property address for fuzzy matching (alternative to listingKey when you have searchId but not ListingKey)."),
     fields: z.array(z.string()).optional().describe("Optional: specific fields to return (e.g., ['YearBuilt', 'PoolYN']). If omitted, returns ALL fields.")
   }),
 

@@ -8,9 +8,24 @@ import { randomUUID } from 'crypto';
 import { AgentPublisher } from './publisher.js';
 import { createAgentGraph } from '../graph/index.js';
 
+interface TokenBuffer {
+  chunks: string[];
+  timer: NodeJS.Timeout | null;
+  metadata: {
+    correlationId: string;
+    sessionId: string;
+    userId: string;
+    nodeId: string;
+    messageId: string;
+  };
+}
+
 export class AgentSubscriber {
   private publisher: AgentPublisher;
   private subscription: any;
+  private tokenBuffers: Map<string, TokenBuffer> = new Map();
+  private readonly BUFFER_MAX_TOKENS = 10;      // Flush after 10 tokens
+  private readonly BUFFER_MAX_DELAY_MS = 50;    // Or flush after 50ms
 
   constructor(private pubsub: PubSub) {
     this.publisher = new AgentPublisher(pubsub);
@@ -110,6 +125,14 @@ export class AgentSubscriber {
         message.ack();
         return;
       }
+
+      // Emit progress: Processing query
+      await this.publisher.publishProgressUpdate({
+        sessionId,
+        userId,
+        correlationId,
+        status: 'Processing query...',
+      });
 
       // Publish streaming start event
       await this.publisher.publishStreamUpdate({
@@ -223,14 +246,13 @@ export class AgentSubscriber {
             if (chunk && typeof chunk === 'string') {
               const messageId = messageIds.get(name);
 
-              // Publish text chunk in real-time with messageId
-              await this.publisher.publishTextChunk({
+              // Buffer tokens for batched publishing (improves streaming performance)
+              await this.bufferToken(messageId, chunk, {
                 correlationId,
                 sessionId,
                 userId,
-                chunk,
                 nodeId: name,
-                messageId, // Include messageId to separate concurrent streams
+                messageId,
               });
             }
           }
@@ -239,6 +261,9 @@ export class AgentSubscriber {
           if (eventType === 'on_chat_model_end' && chatModelNodes.has(name)) {
             const messageId = messageIds.get(name);
             console.log(`[Subscriber] Chat model ended: ${name} with messageId: ${messageId}`);
+
+            // Flush any remaining buffered tokens before completing
+            await this.flushTokenBuffer(messageId);
 
             // Publish completion marker to signal frontend to finalize this message
             await this.publisher.publishTextChunk({
@@ -324,9 +349,93 @@ export class AgentSubscriber {
   }
 
   /**
+   * Buffer token for batched publishing (performance optimization)
+   * Accumulates tokens and publishes in batches to reduce Pub/Sub overhead
+   */
+  private async bufferToken(
+    messageId: string,
+    chunk: string,
+    metadata: {
+      correlationId: string;
+      sessionId: string;
+      userId: string;
+      nodeId: string;
+      messageId: string;
+    }
+  ): Promise<void> {
+    // Initialize buffer for this message if it doesn't exist
+    if (!this.tokenBuffers.has(messageId)) {
+      this.tokenBuffers.set(messageId, {
+        chunks: [],
+        timer: null,
+        metadata,
+      });
+    }
+
+    const buffer = this.tokenBuffers.get(messageId)!;
+    buffer.chunks.push(chunk);
+
+    // Clear existing timer if any
+    if (buffer.timer) {
+      clearTimeout(buffer.timer);
+    }
+
+    // Flush immediately if we've accumulated enough tokens
+    if (buffer.chunks.length >= this.BUFFER_MAX_TOKENS) {
+      await this.flushTokenBuffer(messageId);
+    } else {
+      // Otherwise, set timer to flush after delay
+      buffer.timer = setTimeout(() => {
+        this.flushTokenBuffer(messageId).catch(err => {
+          console.error('[Subscriber] Error flushing token buffer:', err);
+        });
+      }, this.BUFFER_MAX_DELAY_MS);
+    }
+  }
+
+  /**
+   * Flush buffered tokens to Pub/Sub
+   */
+  private async flushTokenBuffer(messageId: string): Promise<void> {
+    const buffer = this.tokenBuffers.get(messageId);
+    if (!buffer || buffer.chunks.length === 0) {
+      return;
+    }
+
+    // Clear timer BEFORE flushing to prevent re-entry
+    if (buffer.timer) {
+      clearTimeout(buffer.timer);
+      buffer.timer = null;
+    }
+
+    // Store chunks and metadata, then IMMEDIATELY clear buffer to prevent re-entry
+    const chunksToFlush = [...buffer.chunks];
+    const metadata = buffer.metadata;
+    this.tokenBuffers.delete(messageId);  // ← CRITICAL: Delete BEFORE publish to prevent duplication
+
+    // Combine all buffered chunks
+    const combinedChunk = chunksToFlush.join('');
+    const tokenCount = chunksToFlush.length;
+
+    // Publish batched chunk
+    await this.publisher.publishTextChunk({
+      ...metadata,
+      chunk: combinedChunk,
+    });
+
+    console.log(`[Subscriber] Flushed ${tokenCount} tokens (${combinedChunk.length} chars) for messageId: ${messageId}`);
+  }
+
+  /**
    * Stop subscriber
    */
   async stop(): Promise<void> {
+    // Flush all pending buffers before stopping
+    const flushPromises = Array.from(this.tokenBuffers.keys()).map(messageId =>
+      this.flushTokenBuffer(messageId)
+    );
+    await Promise.all(flushPromises);
+
     if (this.subscription) {
       await this.subscription.close();
       console.log('[Subscriber] Stopped');

@@ -230,6 +230,21 @@ async function startServer() {
       })
     });
 
+    // Configure batching for text stream topic (performance optimization)
+    const textStreamTopic = pubsub.topic('agent.text.stream');
+    textStreamTopic.setPublishOptions({
+      batching: {
+        maxMessages: 100,          // Batch up to 100 messages
+        maxMilliseconds: 50,       // Or flush after 50ms
+        maxBytes: 1024 * 1024,     // 1MB max batch size
+      },
+      flowControlOptions: {
+        maxOutstandingMessages: 1000,
+        maxOutstandingBytes: 10 * 1024 * 1024, // 10MB
+      }
+    });
+    console.log('✓ Pub/Sub batching configured for agent.text.stream');
+
     const subscriber = new AgentSubscriber(pubsub);
     await subscriber.start();
     console.log('✓ Pub/Sub subscriber initialized');
