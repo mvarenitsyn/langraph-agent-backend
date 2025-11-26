@@ -1,6 +1,6 @@
 import { AIMessage, HumanMessage, SystemMessage } from "@langchain/core/messages";
 import { AgentStateType } from "../types/state.js";
-import { createToolCallingModel, createResponseModel } from "../models/openai.js";
+import { createToolCallingModel, createResponseModel, createRouterModel } from "../models/openai.js";
 import { globalToolsRegistry } from "../tools/registry.js";
 import { getUserContextById } from "../utils/userContext.js";
 import { sharedPublisher } from "../pubsub/shared.js";
@@ -46,11 +46,12 @@ export async function routerNode(state: AgentStateType): Promise<Partial<AgentSt
   }
 
   try {
-    // Create model with streaming enabled for real-time response display
-    // Use createResponseModel() instead of createToolCallingModel() because:
-    // - createToolCallingModel has streaming: false (to prevent verbose acknowledgements in tool nodes)
-    // - createResponseModel has streaming: true (designed for final user-facing responses)
-    const model = createResponseModel();
+    // Create model with streaming DISABLED for router decisions
+    // Use createRouterModel() because:
+    // - Router outputs include "ROUTE: PROPERTY_SEARCH" directives that are internal signals
+    // - These should NOT be streamed to users - they're for graph routing only
+    // - Streaming: false prevents routing directives from appearing in chat
+    const model = createRouterModel();
 
     // Build rich system prompt with user context
     let systemPrompt = '';

@@ -83,6 +83,24 @@ export function createResponseModel(maxTokens?: number) {
 }
 
 /**
+ * Create a ChatOpenAI instance optimized for routing decisions
+ * Streaming is disabled because routing directives (ROUTE: PROPERTY_SEARCH, etc.)
+ * are internal signals and should not be streamed to users
+ */
+export function createRouterModel(maxTokens?: number) {
+  // GPT-5 only supports temperature=1
+  const temperature = config.openai.model.includes('gpt-5') ? 1 : 0.1;
+  return new ChatOpenAI({
+    apiKey: config.openai.apiKey,
+    model: config.openai.model,
+    temperature,
+    streaming: false, // Routing decisions are internal - don't stream to users
+    maxTokens: maxTokens ?? config.tokenLimits.router,
+    timeout: config.timeouts.model,
+  });
+}
+
+/**
  * Model registry for easy access to different model configurations
  */
 export const models = {
@@ -90,4 +108,5 @@ export const models = {
   toolCalling: createToolCallingModel,
   reflection: createReflectionModel,
   response: createResponseModel,
+  router: createRouterModel,
 };

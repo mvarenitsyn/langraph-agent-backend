@@ -228,15 +228,19 @@ export class AgentSubscriber {
         );
 
         // Stream events - capture LLM tokens with messageId tracking
+        // Use run_id (unique per LLM invocation) as key instead of model name
+        // This prevents collision when multiple nodes use the same model class
         for await (const event of streamEvents) {
-          const { event: eventType, data, name } = event;
+          const { event: eventType, data, name, run_id } = event as any;
 
           // Track when chat model starts streaming - generate unique messageId
+          // Use run_id as key to avoid collisions when multiple nodes use same model
           if (eventType === 'on_chat_model_start') {
             const messageId = randomUUID();
-            messageIds.set(name, messageId);
-            chatModelNodes.add(name);
-            console.log(`[Subscriber] Chat model started: ${name} with messageId: ${messageId}`);
+            const streamKey = run_id || name; // Fallback to name if run_id not available
+            messageIds.set(streamKey, messageId);
+            chatModelNodes.add(streamKey);
+            console.log(`[Subscriber] Chat model started: ${name} (run_id: ${run_id}) with messageId: ${messageId}`);
           }
 
           // Capture LLM token chunks from all nodes (including generate_status)
@@ -244,7 +248,8 @@ export class AgentSubscriber {
           if (eventType === 'on_chat_model_stream') {
             const chunk = data?.chunk?.content;
             if (chunk && typeof chunk === 'string') {
-              const messageId = messageIds.get(name);
+              const streamKey = run_id || name;
+              const messageId = messageIds.get(streamKey);
 
               // Buffer tokens for batched publishing (improves streaming performance)
               await this.bufferToken(messageId, chunk, {
@@ -258,9 +263,10 @@ export class AgentSubscriber {
           }
 
           // When chat model ends, publish completion marker
-          if (eventType === 'on_chat_model_end' && chatModelNodes.has(name)) {
-            const messageId = messageIds.get(name);
-            console.log(`[Subscriber] Chat model ended: ${name} with messageId: ${messageId}`);
+          const streamKeyForEnd = run_id || name;
+          if (eventType === 'on_chat_model_end' && chatModelNodes.has(streamKeyForEnd)) {
+            const messageId = messageIds.get(streamKeyForEnd);
+            console.log(`[Subscriber] Chat model ended: ${name} (run_id: ${run_id}) with messageId: ${messageId}`);
 
             // Flush any remaining buffered tokens before completing
             await this.flushTokenBuffer(messageId);
@@ -276,9 +282,9 @@ export class AgentSubscriber {
               isComplete: true,
             });
 
-            // Clean up
-            messageIds.delete(name);
-            chatModelNodes.delete(name);
+            // Clean up using streamKey (run_id or name)
+            messageIds.delete(streamKeyForEnd);
+            chatModelNodes.delete(streamKeyForEnd);
           }
 
           // Capture node execution for progress tracking
