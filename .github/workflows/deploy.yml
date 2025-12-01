@@ -70,7 +70,7 @@ jobs:
         run: |
           gcloud builds submit \
             --config cloudbuild.yaml \
-            --substitutions=COMMIT_SHA=${{ github.sha }}
+            --project=${{ env.GCP_PROJECT_ID }}
 
       - name: Get Cloud Run URL
         id: get-url
