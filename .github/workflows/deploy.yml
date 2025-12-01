@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 env:
-  GCP_PROJECT_ID: rga-automation
+  GCP_PROJECT_ID: rgaautomations
   GCP_REGION: us-central1
 
 jobs:
