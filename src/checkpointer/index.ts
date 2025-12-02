@@ -1,5 +1,6 @@
 import { PostgresSaver } from "@langchain/langgraph-checkpoint-postgres";
-import { MemorySaver } from "@langchain/langgraph";
+import { MemorySaver, BaseCheckpointSaver } from "@langchain/langgraph";
+import type { CheckpointMetadata, CheckpointTuple, PendingWrite } from "@langchain/langgraph-checkpoint";
 import { config } from "../config/index.js";
 
 /**
@@ -7,12 +8,106 @@ import { config } from "../config/index.js";
  *
  * Provides persistent checkpoint storage for LangGraph agents.
  * Handles Cloud Run cold starts and connection recovery.
+ *
+ * CRITICAL FIX: Wraps PostgresSaver to catch runtime write errors
+ * that would otherwise crash the container.
  */
 
-let checkpointerInstance: PostgresSaver | null = null;
+let checkpointerInstance: ResilientPostgresSaver | null = null;
 let memoryFallback: MemorySaver | null = null;
 let lastConnectionAttempt: number = 0;
 const CONNECTION_RETRY_INTERVAL = 30000; // 30 seconds between retry attempts
+
+/**
+ * Resilient PostgreSQL Saver - wraps PostgresSaver to catch runtime errors
+ *
+ * When PostgreSQL connection fails during writes, logs error but doesn't crash.
+ * This is critical for Cloud Run where connections can become stale.
+ */
+class ResilientPostgresSaver extends BaseCheckpointSaver {
+  private postgres: PostgresSaver;
+  private errorCount: number = 0;
+  private readonly maxErrorsBeforeFallback = 3;
+
+  constructor(postgres: PostgresSaver) {
+    super();
+    this.postgres = postgres;
+  }
+
+  async getTuple(config: any): Promise<CheckpointTuple | undefined> {
+    try {
+      return await this.postgres.getTuple(config);
+    } catch (error) {
+      console.error('[ResilientCheckpointer] getTuple error (non-fatal):', error.message);
+      this.errorCount++;
+      return undefined;
+    }
+  }
+
+  async *list(config: any, options?: any): AsyncGenerator<CheckpointTuple> {
+    try {
+      for await (const tuple of this.postgres.list(config, options)) {
+        yield tuple;
+      }
+    } catch (error) {
+      console.error('[ResilientCheckpointer] list error (non-fatal):', error.message);
+      this.errorCount++;
+      // Return empty generator on error
+    }
+  }
+
+  async put(config: any, checkpoint: any, metadata: CheckpointMetadata, newVersions: any): Promise<any> {
+    try {
+      return await this.postgres.put(config, checkpoint, metadata, newVersions);
+    } catch (error) {
+      console.error('[ResilientCheckpointer] put error (non-fatal):', error.message);
+      this.errorCount++;
+      // Return a minimal response to prevent crash
+      return {
+        configurable: config.configurable || {},
+      };
+    }
+  }
+
+  async putWrites(config: any, writes: PendingWrite[], taskId: string): Promise<void> {
+    try {
+      await this.postgres.putWrites(config, writes, taskId);
+    } catch (error) {
+      // This is the critical error that was crashing containers
+      console.error('[ResilientCheckpointer] putWrites error (non-fatal):', error.message);
+      this.errorCount++;
+      // Don't rethrow - allow graph execution to continue
+    }
+  }
+
+  async get(config: any): Promise<any> {
+    try {
+      return await this.postgres.get(config);
+    } catch (error) {
+      console.error('[ResilientCheckpointer] get error (non-fatal):', error.message);
+      this.errorCount++;
+      return undefined;
+    }
+  }
+
+  async deleteThread(threadId: string): Promise<void> {
+    try {
+      await this.postgres.deleteThread(threadId);
+    } catch (error) {
+      console.error('[ResilientCheckpointer] deleteThread error (non-fatal):', error.message);
+      this.errorCount++;
+      // Don't rethrow
+    }
+  }
+
+  hasExcessiveErrors(): boolean {
+    return this.errorCount >= this.maxErrorsBeforeFallback;
+  }
+
+  resetErrorCount(): void {
+    this.errorCount = 0;
+  }
+}
 
 /**
  * Create PostgreSQL checkpointer with connection pool settings optimized for Cloud Run
@@ -37,10 +132,16 @@ async function createPostgresCheckpointer(): Promise<PostgresSaver> {
 /**
  * Create and initialize PostgreSQL checkpointer with fallback to memory
  */
-export async function createCheckpointer(): Promise<PostgresSaver | MemorySaver> {
-  // If we have a working postgres instance, return it
-  if (checkpointerInstance) {
+export async function createCheckpointer(): Promise<BaseCheckpointSaver> {
+  // If we have a working postgres instance with no excessive errors, return it
+  if (checkpointerInstance && !checkpointerInstance.hasExcessiveErrors()) {
     return checkpointerInstance;
+  }
+
+  // If postgres had too many errors, reset and try again
+  if (checkpointerInstance && checkpointerInstance.hasExcessiveErrors()) {
+    console.log('[Checkpointer] PostgreSQL had excessive errors, will recreate connection');
+    checkpointerInstance = null;
   }
 
   // If postgres failed recently, use memory fallback
@@ -54,10 +155,10 @@ export async function createCheckpointer(): Promise<PostgresSaver | MemorySaver>
   lastConnectionAttempt = now;
 
   try {
-    const checkpointer = await createPostgresCheckpointer();
-    checkpointerInstance = checkpointer;
-    console.log('[Checkpointer] ✓ PostgreSQL checkpointer initialized');
-    return checkpointer;
+    const postgres = await createPostgresCheckpointer();
+    checkpointerInstance = new ResilientPostgresSaver(postgres);
+    console.log('[Checkpointer] ✓ PostgreSQL checkpointer initialized (with resilience wrapper)');
+    return checkpointerInstance;
   } catch (error) {
     console.error('[Checkpointer] ✗ PostgreSQL failed, using memory fallback:', error);
 
@@ -85,7 +186,7 @@ export function resetCheckpointer(): void {
 /**
  * Get the existing checkpointer instance (postgres or memory fallback)
  */
-export function getCheckpointer(): PostgresSaver | MemorySaver {
+export function getCheckpointer(): BaseCheckpointSaver {
   if (checkpointerInstance) {
     return checkpointerInstance;
   }
