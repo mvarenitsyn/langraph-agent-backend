@@ -10,6 +10,7 @@ export class AgentPublisher {
 
   /**
    * Publish agent task response (final result)
+   * Non-blocking: catches timeout errors to prevent agent crashes
    */
   async publishTaskResponse(data: {
     correlationId: string;
@@ -19,30 +20,36 @@ export class AgentPublisher {
     result?: any;
     error?: any;
   }): Promise<void> {
-    const topic = this.pubsub.topic('agent.task.response');
+    try {
+      const topic = this.pubsub.topic('agent.task.response');
 
-    const message = {
-      type: 'agent.task.response',
-      timestamp: new Date().toISOString(),
-      source: 'agent',
-      sessionId: data.sessionId,
-      userId: data.userId,
-      payload: {
-        status: data.status,
-        result: data.result,
-        error: data.error,
-      },
-      metadata: {
-        correlationId: data.correlationId,
-      },
-    };
+      const message = {
+        type: 'agent.task.response',
+        timestamp: new Date().toISOString(),
+        source: 'agent',
+        sessionId: data.sessionId,
+        userId: data.userId,
+        payload: {
+          status: data.status,
+          result: data.result,
+          error: data.error,
+        },
+        metadata: {
+          correlationId: data.correlationId,
+        },
+      };
 
-    await topic.publishMessage({ json: message });
-    console.log(`[Publisher] Published task response: ${data.correlationId}`);
+      await topic.publishMessage({ json: message });
+      console.log(`[Publisher] Published task response: ${data.correlationId}`);
+    } catch (error) {
+      // Non-blocking: Don't crash agent on Pub/Sub timeouts
+      console.warn('[Publisher] Failed to publish task response (non-fatal):', error instanceof Error ? error.message : String(error));
+    }
   }
 
   /**
    * Publish streaming update
+   * Non-blocking: catches timeout errors to prevent agent crashes
    */
   async publishStreamUpdate(data: {
     correlationId: string;
@@ -53,27 +60,32 @@ export class AgentPublisher {
     message?: string;
     data?: any;
   }): Promise<void> {
-    const topic = this.pubsub.topic('agent.streaming.update');
+    try {
+      const topic = this.pubsub.topic('agent.streaming.update');
 
-    const message = {
-      type: 'agent.streaming.update',
-      timestamp: new Date().toISOString(),
-      source: 'agent',
-      sessionId: data.sessionId,
-      userId: data.userId,
-      payload: {
-        eventType: data.eventType,
-        stepNumber: data.stepNumber,
-        message: data.message,
-        data: data.data,
-      },
-      metadata: {
-        correlationId: data.correlationId,
-      },
-    };
+      const message = {
+        type: 'agent.streaming.update',
+        timestamp: new Date().toISOString(),
+        source: 'agent',
+        sessionId: data.sessionId,
+        userId: data.userId,
+        payload: {
+          eventType: data.eventType,
+          stepNumber: data.stepNumber,
+          message: data.message,
+          data: data.data,
+        },
+        metadata: {
+          correlationId: data.correlationId,
+        },
+      };
 
-    await topic.publishMessage({ json: message });
-    console.log(`[Publisher] Published stream update: ${data.eventType}`);
+      await topic.publishMessage({ json: message });
+      console.log(`[Publisher] Published stream update: ${data.eventType}`);
+    } catch (error) {
+      // Non-blocking: Don't crash agent on Pub/Sub timeouts
+      console.warn('[Publisher] Failed to publish stream update (non-fatal):', error instanceof Error ? error.message : String(error));
+    }
   }
 
   /**
