@@ -173,6 +173,7 @@ export class AgentSubscriber {
         // Track messageIds for each node to separate concurrent streams
         const messageIds = new Map<string, string>();
         const chatModelNodes = new Set<string>(); // Track which nodes are chat models
+        let tokensStreamed = false; // Track if any tokens were streamed
 
         // Prepare initial state
         const initialState = {
@@ -250,6 +251,7 @@ export class AgentSubscriber {
             if (chunk && typeof chunk === 'string') {
               const streamKey = run_id || name;
               const messageId = messageIds.get(streamKey);
+              tokensStreamed = true; // Mark that we've streamed tokens
 
               // Buffer tokens for batched publishing (improves streaming performance)
               await this.bufferToken(messageId, chunk, {
@@ -316,6 +318,36 @@ export class AgentSubscriber {
         // Get final state
         const finalState = await graph.getState(config);
         const result = finalState.values || {};
+
+        // 🚨 FIX: If no tokens were streamed but we have a finalResponse (e.g., router direct response),
+        // publish it as a text chunk so the frontend displays it
+        if (!tokensStreamed && result.finalResponse) {
+          console.log('[Subscriber] No tokens streamed but finalResponse exists - publishing as text chunk');
+          const directResponseMessageId = randomUUID();
+
+          // Publish the full response as a single text chunk
+          await this.publisher.publishTextChunk({
+            correlationId,
+            sessionId,
+            userId,
+            chunk: result.finalResponse,
+            nodeId: 'router',
+            messageId: directResponseMessageId,
+          });
+
+          // Publish completion marker
+          await this.publisher.publishTextChunk({
+            correlationId,
+            sessionId,
+            userId,
+            chunk: '',
+            nodeId: 'router',
+            messageId: directResponseMessageId,
+            isComplete: true,
+          });
+
+          console.log(`[Subscriber] Published direct response: "${result.finalResponse.substring(0, 100)}..."`);
+        }
 
         // Publish final response
         await this.publisher.publishTaskResponse({

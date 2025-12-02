@@ -10,13 +10,18 @@ import { sharedPublisher } from "../pubsub/shared.js";
 /**
  * Property Operations Node - Multi-Tool Agent
  *
- * This node is a specialized mini-agent that combines three property operation tools:
+ * This node is a specialized mini-agent that combines property operation tools:
  * 1. property_filter_sort - Filter/sort existing search results with JavaScript
  * 2. property_get_results - Retrieve search results by searchId
  * 3. property_get_details - Get detailed information about a specific property
+ * 4. cma_generate - Generate a Comparative Market Analysis report for a property
+ * 5. cma_history - Get the user's CMA report history
+ * 6. property_discover_fields - Discover available MLS fields in search results
+ * 7. property_analyze - Run analysis code on properties in secure sandbox
+ * 8. property_query - Query properties with custom filter/sort logic
  *
  * Flow:
- * - Uses LLM with 3 tools bound
+ * - Uses LLM with 8 tools bound
  * - LLM decides which tools to call, in what order, and how many times
  * - Can execute tools in parallel or sequential chains
  * - Generates final response after tool execution completes
@@ -61,10 +66,12 @@ export async function propertyOperationsNode(state: AgentStateType): Promise<Par
   }
 
   try {
-    // Get all three property operation tools
+    // Get all property operation tools (3 property tools + 2 CMA tools)
     const filterSortTool = globalToolsRegistry.getTool('property_filter_sort');
     const getResultsTool = globalToolsRegistry.getTool('property_get_results');
     const getDetailsTool = globalToolsRegistry.getTool('property_get_details');
+    const cmaGenerateTool = globalToolsRegistry.getTool('cma_generate');
+    const cmaHistoryTool = globalToolsRegistry.getTool('cma_history');
 
     if (!filterSortTool || !getResultsTool || !getDetailsTool) {
       const missing = [];
@@ -72,6 +79,30 @@ export async function propertyOperationsNode(state: AgentStateType): Promise<Par
       if (!getResultsTool) missing.push('property_get_results');
       if (!getDetailsTool) missing.push('property_get_details');
       throw new Error(`Required tools not found: ${missing.join(', ')}`);
+    }
+
+    // CMA tools are optional - warn if not found but don't fail
+    if (!cmaGenerateTool) {
+      console.warn('[PropertyOperations] ⚠️ cma_generate tool not found - CMA features disabled');
+    }
+    if (!cmaHistoryTool) {
+      console.warn('[PropertyOperations] ⚠️ cma_history tool not found - CMA history disabled');
+    }
+
+    // Get sandbox tools (property discovery, analysis, query)
+    const discoverFieldsTool = globalToolsRegistry.getTool('property_discover_fields');
+    const analyzeTool = globalToolsRegistry.getTool('property_analyze');
+    const queryTool = globalToolsRegistry.getTool('property_query');
+
+    // Sandbox tools are optional - warn if not found but don't fail
+    if (!discoverFieldsTool) {
+      console.warn('[PropertyOperations] ⚠️ property_discover_fields tool not found - field discovery disabled');
+    }
+    if (!analyzeTool) {
+      console.warn('[PropertyOperations] ⚠️ property_analyze tool not found - analysis disabled');
+    }
+    if (!queryTool) {
+      console.warn('[PropertyOperations] ⚠️ property_query tool not found - custom query disabled');
     }
 
     // DEBUG: Verify tool has correct implementation
@@ -132,7 +163,97 @@ export async function propertyOperationsNode(state: AgentStateType): Promise<Par
       })
     ];
 
-    console.log('[PropertyOperations] ✓ Tools wrapped with searchId:', wrappedTools.map(t => t.name).join(', '));
+    // Add CMA tools if available (they use listingKey from search results, not searchId)
+    // CMA tools need metadata (userId) passed via config, not searchId injection
+    const metadata = state.metadata || {};
+
+    if (cmaGenerateTool) {
+      wrappedTools.push(
+        new DynamicStructuredTool({
+          name: cmaGenerateTool.name,
+          description: cmaGenerateTool.description,
+          schema: cmaGenerateTool.schema as z.ZodObject<any>,
+          func: async (args, config) => {
+            // Pass metadata through config for userId extraction
+            // Cast to any to bypass strict type checking since we're injecting metadata
+            const configWithMetadata = {
+              ...(config as any),
+              metadata: {
+                ...metadata,
+                userId: metadata.userId,
+                sessionId: metadata.sessionId,
+              },
+            } as any;
+            return cmaGenerateTool.func(args, configWithMetadata);
+          }
+        })
+      );
+    }
+
+    if (cmaHistoryTool) {
+      wrappedTools.push(
+        new DynamicStructuredTool({
+          name: cmaHistoryTool.name,
+          description: cmaHistoryTool.description,
+          schema: cmaHistoryTool.schema as z.ZodObject<any>,
+          func: async (args, config) => {
+            // Pass metadata through config for userId extraction
+            // Cast to any to bypass strict type checking since we're injecting metadata
+            const configWithMetadata = {
+              ...(config as any),
+              metadata: {
+                ...metadata,
+                userId: metadata.userId,
+                sessionId: metadata.sessionId,
+              },
+            } as any;
+            return cmaHistoryTool.func(args, configWithMetadata);
+          }
+        })
+      );
+    }
+
+    // Add sandbox tools if available - they need searchId injected
+    if (discoverFieldsTool) {
+      wrappedTools.push(
+        new DynamicStructuredTool({
+          name: discoverFieldsTool.name,
+          description: discoverFieldsTool.description,
+          schema: (discoverFieldsTool.schema as z.ZodObject<any>).omit({ searchId: true }),
+          func: async (args, config) => {
+            return discoverFieldsTool.func({ ...args, searchId }, config);
+          }
+        })
+      );
+    }
+
+    if (analyzeTool) {
+      wrappedTools.push(
+        new DynamicStructuredTool({
+          name: analyzeTool.name,
+          description: analyzeTool.description,
+          schema: (analyzeTool.schema as z.ZodObject<any>).omit({ searchId: true }),
+          func: async (args, config) => {
+            return analyzeTool.func({ ...args, searchId }, config);
+          }
+        })
+      );
+    }
+
+    if (queryTool) {
+      wrappedTools.push(
+        new DynamicStructuredTool({
+          name: queryTool.name,
+          description: queryTool.description,
+          schema: (queryTool.schema as z.ZodObject<any>).omit({ searchId: true }),
+          func: async (args, config) => {
+            return queryTool.func({ ...args, searchId }, config);
+          }
+        })
+      );
+    }
+
+    console.log('[PropertyOperations] ✓ Tools wrapped:', wrappedTools.map(t => t.name).join(', '));
     console.log(`[PropertyOperations] Binding ${wrappedTools.length} tools to LLM`);
 
     // Create model with wrapped tools bound
@@ -164,10 +285,10 @@ export async function propertyOperationsNode(state: AgentStateType): Promise<Par
     }
 
     const instructions = `
-Your job: Use the available tools to help the user work with property search results.
+Your job: Use the available tools to help the user work with property search results and generate CMA reports.
 
-**IMPORTANT**: You have an active search session - searchId is automatically provided to all tools.
-You do NOT need to specify searchId when calling tools - it's auto-injected!
+**IMPORTANT**: You have an active search session - searchId is automatically provided to property tools.
+You do NOT need to specify searchId when calling property tools - it's auto-injected!
 
 **Available Tools:**
 
@@ -187,6 +308,34 @@ You do NOT need to specify searchId when calling tools - it's auto-injected!
    - Returns: Complete property information (all 50+ MLS fields)
    - Examples: "tell me about 123 Main St", "details on the first property"
 
+4. **cma_generate** - Generate a Comparative Market Analysis (CMA) report
+   - Use when: User asks for property valuation, CMA, price analysis, or investment analysis
+   - **REQUIRED**: listingKey from search results (from property_get_results)
+   - Optional: enableAIInsights (default: true), maxComps (default: 10), radiusMiles (default: 3)
+   - Examples: "What's this property worth?", "Generate a CMA", "Is this a good deal?", "Price analysis"
+   - Returns: Estimated value, price range, comparable sales, confidence score, AI insights
+   - **NOTE**: Takes 30-90 seconds to generate - be patient!
+
+5. **cma_history** - Get user's past CMA reports
+   - Use when: User asks to see previous valuations or CMA history
+   - Parameters: limit (default: 10), offset (default: 0)
+
+6. **property_discover_fields** - Discover all available fields in property data
+   - Use when: User asks "what fields exist?", "what data is available?", "show me pool fields"
+   - Parameters: filter (optional regex for field names), categorize (group by category)
+   - Returns: Field names, types, presence rates, sample values
+
+7. **property_analyze** - Run analysis code on property data in secure sandbox
+   - Use when: User asks for aggregations, statistics, or custom calculations
+   - Parameters: code (JavaScript expression)
+   - Available helpers: sum(field), avg(field), min(field), max(field), groupBy(field), countBy(field), unique(field)
+   - Examples: "avg('ListPrice')", "countBy('City')", "({ min: min('ListPrice'), max: max('ListPrice') })"
+
+8. **property_query** - Query properties with custom JavaScript filter/sort logic
+   - Use when: Complex multi-condition filtering or computed comparisons
+   - Parameters: filterCode (boolean expression with 'p' as property), sortCode (optional comparison with 'a' and 'b')
+   - Examples: "p.BedroomsTotal >= 3 && p.PoolYN && p.ListPrice < 800000"
+
 **Tool Execution Strategy:**
 
 You can call tools in ANY ORDER based on the user's query. Common patterns:
@@ -198,6 +347,10 @@ You can call tools in ANY ORDER based on the user's query. Common patterns:
 - "filter to 3BR and show me the cheapest" → property_filter_sort → property_get_results → property_get_details
 - "show me the search results and tell me about the first one" → property_get_results → property_get_details
 
+**CMA workflow** (for valuations):
+- "What's this property worth?" → property_get_results (to get listingKey) → cma_generate (with listingKey)
+- "Generate CMA for the first property" → property_get_results → cma_generate
+
 **Multiple iterations**:
 - "filter to waterfront, then to under $1M, then show me the best one" →
   property_filter_sort (waterfront) → property_filter_sort (price) → property_get_results → property_get_details
@@ -207,8 +360,10 @@ You can call tools in ANY ORDER based on the user's query. Common patterns:
 2. If searchId is available (shown above), you MUST use property_filter_sort or property_get_results
 3. For property_get_details, you need BOTH searchId AND (listingKey OR address)
 4. Use property_get_results first if you need to see what properties are available
-5. Call tools as many times as needed to fully answer the user's query
-6. Don't apologize about missing data - just call the tools to get it!
+5. For **CMA/valuation requests**, you MUST call cma_generate tool - do NOT generate estimates from your own reasoning!
+6. cma_generate requires a listingKey - get it from property_get_results first if needed
+7. Call tools as many times as needed to fully answer the user's query
+8. Don't apologize about missing data - just call the tools to get it!
 
 **Available Property Fields:**
 - Basic: ListingKey, UnparsedAddress, ListPrice, BedroomsTotal, BathroomsTotalInteger
@@ -222,6 +377,7 @@ The UI will automatically render based on tool results:
 - property_filter_sort → Updates search results with filtered list
 - property_get_results → Displays property list on map/listview
 - property_get_details → Opens property details modal
+- cma_generate → Displays CMA report with valuation details
 `;
 
     // Start fresh without conversation history to avoid OpenAI tool message errors
@@ -468,6 +624,34 @@ async function publishUIEventsForTools(toolResults: Record<string, any>, state: 
         });
 
         console.log('[PropertyOperations] ✓ property_details event published');
+      }
+
+      // cma_generate → cma_report
+      else if (toolName === 'cma_generate' && result.estimatedPrice) {
+        console.log(`[PropertyOperations] Publishing cma_report event for ${result.listingKey}`);
+
+        await uiEventPublisher.publishUIEvent({
+          renderType: 'cma_report',
+          data: {
+            jobId: result.jobId,
+            listingKey: result.listingKey,
+            estimatedPrice: result.estimatedPrice,
+            priceRange: result.priceRange,
+            pricePerSqft: result.pricePerSqft,
+            confidenceScore: result.confidenceScore,
+            compQuality: result.compQuality,
+            compsCount: result.compsCount,
+            hasAIInsights: result.hasAIInsights,
+            reportUrl: result.reportUrl,
+            generatedAt: result.generatedAt,
+            summary: result.summary,
+          },
+          sessionId,
+          userId,
+          correlationId,
+        });
+
+        console.log('[PropertyOperations] ✓ cma_report event published');
       }
     } catch (error) {
       console.error(`[PropertyOperations] Failed to publish UI event for ${toolName}:`, error);

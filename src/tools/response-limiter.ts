@@ -15,14 +15,35 @@ export const TOOL_RESPONSE_LIMITS: ToolResponseLimits = {
   maxProperties: 20,
   maxChars: 10000,  // ~2500 tokens
   essentialFields: [
-    'ListingKey',           // PRIMARY - required for frontend identification
-    'UnparsedAddress',      // Full address
-    'ListPrice',            // Price
-    'BedroomsTotal',        // Bedrooms
-    'BathroomsTotalInteger',// Bathrooms
-    'LivingArea',           // Square footage
-    'City',                 // City
-    'StateOrProvince'       // State
+    // Normalized field names (from search-executor / database)
+    'listingKey',           // PRIMARY - required for CMA and frontend identification
+    'address',              // Full address
+    'price',                // Price
+    'bedrooms',             // Bedrooms
+    'bathrooms',            // Bathrooms
+    'sqft',                 // Square footage
+    'city',                 // City
+    'state',                // State
+    // Listing agent info (for user inquiries)
+    'listAgentFullName',    // Listing agent name
+    'listAgentMlsId',       // Listing agent MLS ID
+    'listOfficeName',       // Listing office/brokerage
+    'listAgentEmail',       // Listing agent email
+    'listAgentDirectPhone', // Listing agent phone
+    // Also check MLS field names for backward compatibility
+    'ListingKey',
+    'UnparsedAddress',
+    'ListPrice',
+    'BedroomsTotal',
+    'BathroomsTotalInteger',
+    'LivingArea',
+    'City',
+    'StateOrProvince',
+    'ListAgentFullName',
+    'ListAgentMlsId',
+    'ListOfficeName',
+    'ListAgentEmail',
+    'ListAgentDirectPhone'
   ]
 };
 
@@ -171,9 +192,9 @@ export function calculateStatistics(properties: any[]): {
 
   const stats: any = {};
 
-  // Price statistics
+  // Price statistics (check both lowercase and MLS field names)
   const prices = properties
-    .map(p => p.ListPrice)
+    .map(p => p.price ?? p.ListPrice)
     .filter((p): p is number => typeof p === 'number' && !isNaN(p));
 
   if (prices.length > 0) {
@@ -184,9 +205,9 @@ export function calculateStatistics(properties: any[]): {
     };
   }
 
-  // Bedroom statistics
+  // Bedroom statistics (check both lowercase and MLS field names)
   const bedrooms = properties
-    .map(p => p.BedroomsTotal)
+    .map(p => p.bedrooms ?? p.BedroomsTotal)
     .filter((b): b is number => typeof b === 'number' && !isNaN(b));
 
   if (bedrooms.length > 0) {
@@ -196,9 +217,9 @@ export function calculateStatistics(properties: any[]): {
     };
   }
 
-  // Bathroom statistics
+  // Bathroom statistics (check both lowercase and MLS field names)
   const bathrooms = properties
-    .map(p => p.BathroomsTotalInteger)
+    .map(p => p.bathrooms ?? p.BathroomsTotalInteger)
     .filter((b): b is number => typeof b === 'number' && !isNaN(b));
 
   if (bathrooms.length > 0) {
@@ -208,11 +229,12 @@ export function calculateStatistics(properties: any[]): {
     };
   }
 
-  // City distribution (top 5 cities)
+  // City distribution (top 5 cities) - check both lowercase and MLS field names
   const cityCount: Record<string, number> = {};
   properties.forEach(p => {
-    if (p.City && typeof p.City === 'string') {
-      cityCount[p.City] = (cityCount[p.City] || 0) + 1;
+    const city = p.city ?? p.City;
+    if (city && typeof city === 'string') {
+      cityCount[city] = (cityCount[city] || 0) + 1;
     }
   });
 
@@ -228,9 +250,9 @@ export function calculateStatistics(properties: any[]): {
     stats.cities = topCities;
   }
 
-  // Average square footage
+  // Average square footage (check both lowercase and MLS field names)
   const sqFeet = properties
-    .map(p => p.LivingArea)
+    .map(p => p.sqft ?? p.LivingArea)
     .filter((a): a is number => typeof a === 'number' && !isNaN(a));
 
   if (sqFeet.length > 0) {

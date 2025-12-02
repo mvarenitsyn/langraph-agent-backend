@@ -2,195 +2,168 @@
  * Property Operations Tools
  *
  * Tools for filtering, sorting, and retrieving property search results
- * with smart response truncation to prevent LLM context overflow.
+ * using the unified property_search PostgreSQL database.
+ *
+ * All tools use SQL-based operations for performance and consistency.
  */
 
 import { DynamicStructuredTool } from "@langchain/core/tools";
 import { z } from "zod";
-import https from "https";
 import {
   createLimitedResponse,
   formatLimitedResponse,
   TOOL_RESPONSE_LIMITS
 } from "./response-limiter.js";
+import {
+  getSearchResults as getSearchResultsFromDB,
+  getSearchMetadata,
+  getPropertyByListingKey
+} from "../subgraphs/property-search/db/search-results.js";
 
 /**
- * Property Filter/Sort Tool
+ * Property Filter/Sort Tool (SQL-Based)
  *
- * Execute custom JavaScript code to filter, sort, or transform property search results.
- * Results are saved to database and published to frontend via Pub/Sub.
- *
- * IMPORTANT: This tool returns limited data (<2500 tokens) to save LLM context.
- * Full results are always saved to the database and available to the frontend.
+ * Filter and sort property search results using efficient SQL queries.
+ * Replaces the previous JS sandbox approach with indexed database queries.
  */
 export const propertyFilterSortTool = new DynamicStructuredTool({
   name: "property_filter_sort",
-  description: `Execute JavaScript code to filter, sort, or transform property search results.
+  description: `Filter and sort property search results using predefined operations.
 
-This tool loads properties from a previous search (by searchId) and executes custom
-JavaScript code against them. Results are saved to the database and sent to the frontend.
+This tool filters and sorts properties from a previous search (by searchId) using
+efficient SQL queries. Results are returned immediately and sent to the frontend.
 
-CRITICAL: This tool returns TRUNCATED responses to save LLM context:
-- Arrays with ≤20 items: Full essential fields returned
-- Arrays with >20 items: Statistics + 20 samples returned
-- Non-arrays: Returned if <10KB, otherwise preview + stats
-- Maximum response size: ~2500 tokens
+SORTING (sortBy):
+- price: Sort by list price
+- bedrooms: Sort by bedroom count
+- sqft: Sort by living area (square footage)
+- combined_score: Sort by relevance/match score (default)
+- year_built: Sort by year built
 
-Full results are ALWAYS:
-1. Saved to database (filtered_results column)
-2. Published via Pub/Sub to frontend
-3. Displayed on map/listview immediately
+SORT ORDER (sortOrder):
+- asc: Ascending (lowest first, oldest first)
+- desc: Descending (highest first, newest first) - default
 
-Available in JavaScript context:
-- properties: Array of Property objects
-- console: Safe console object (log, error, warn)
-- Math, Date, JSON: Standard JavaScript objects
-- Array methods: filter, map, reduce, sort, slice, etc.
+FILTERING:
+- minPrice/maxPrice: Filter by price range
+- minBeds/maxBeds: Filter by bedroom count
+- cities: Filter by city names (array, e.g., ["Miami", "Aventura"])
+- status: Filter by listing status (array, e.g., ["Active", "Pending"])
 
-Common examples:
+PAGINATION:
+- page: Page number (default: 1)
+- pageSize: Results per page (default: 20, max: 100)
 
-1. Filter by price:
-   return properties.filter(p => p.ListPrice < 500000)
+Examples:
+1. "Sort by price, cheapest first":
+   sortBy: "price", sortOrder: "asc"
 
-2. Sort by price:
-   return properties.sort((a, b) => a.ListPrice - b.ListPrice)
+2. "Show 3+ bedroom homes under 500k":
+   minBeds: 3, maxPrice: 500000
 
-3. Filter + sort:
-   return properties
-     .filter(p => p.BedroomsTotal >= 3)
-     .sort((a, b) => a.ListPrice - b.ListPrice)
+3. "Only Miami and Aventura properties":
+   cities: ["Miami", "Aventura"]
 
-4. Calculate statistics:
-   const prices = properties.map(p => p.ListPrice)
-   return {
-     min: Math.min(...prices),
-     max: Math.max(...prices),
-     avg: prices.reduce((sum, p) => sum + p, 0) / prices.length
-   }
+4. "Newest homes first":
+   sortBy: "year_built", sortOrder: "desc"
 
-5. Group by city:
-   return properties.reduce((acc, p) => {
-     const city = p.City || 'Unknown'
-     if (!acc[city]) acc[city] = []
-     acc[city].push(p)
-     return acc
-   }, {})
-
-Property fields available:
-- ListingKey: Unique property ID
-- UnparsedAddress: Full address
-- ListPrice: List price
-- BedroomsTotal: Number of bedrooms
-- BathroomsTotalInteger: Number of bathrooms
-- LivingArea: Square footage
-- City, StateOrProvince: Location
-- Plus 50+ other MLS fields (see Trestle API docs)
-
-The tool returns a summary with essential fields only. Frontend displays full results.`,
+5. "Active listings only, sorted by size":
+   status: ["Active"], sortBy: "sqft", sortOrder: "desc"`,
 
   schema: z.object({
-    searchId: z.string().optional().describe("UUID of the search result to filter/sort. OPTIONAL - will be auto-injected from active search session if not provided."),
-    code: z.string().describe("JavaScript code to execute. MUST return a value (use 'return' statement). Available context: properties array, console, Math, Date, JSON."),
-    saveResults: z.boolean().default(true).describe("Whether to save filtered results to database and send to frontend (default: true)")
+    searchId: z.string().describe("UUID of the search result to filter/sort"),
+    sortBy: z.enum(['price', 'bedrooms', 'sqft', 'combined_score', 'year_built']).optional().describe("Field to sort by (default: combined_score)"),
+    sortOrder: z.enum(['asc', 'desc']).optional().describe("Sort direction: asc (ascending) or desc (descending, default)"),
+    minPrice: z.number().optional().describe("Minimum price filter"),
+    maxPrice: z.number().optional().describe("Maximum price filter"),
+    minBeds: z.number().optional().describe("Minimum bedrooms filter"),
+    maxBeds: z.number().optional().describe("Maximum bedrooms filter"),
+    cities: z.array(z.string()).optional().describe("Filter by city names (e.g., ['Miami', 'Aventura'])"),
+    status: z.array(z.string()).optional().describe("Filter by listing status (e.g., ['Active', 'Pending'])"),
+    page: z.number().optional().describe("Page number (default: 1)"),
+    pageSize: z.number().optional().describe("Results per page (default: 20, max: 100)")
   }),
 
-  func: async ({ searchId, code, saveResults }, config) => {
-    console.log(`[PropertyFilterSortTool] Executing code for searchId: ${searchId}`);
-    console.log(`[PropertyFilterSortTool] Code length: ${code.length} characters`);
-    console.log(`[PropertyFilterSortTool] Save results: ${saveResults}`);
+  func: async ({ searchId, sortBy, sortOrder, minPrice, maxPrice, minBeds, maxBeds, cities, status, page, pageSize }, config) => {
+    console.log(`[PropertyFilterSortTool] SQL-based filter/sort for searchId: ${searchId}`);
+    console.log(`[PropertyFilterSortTool] Params:`, { sortBy, sortOrder, minPrice, maxPrice, minBeds, maxBeds, cities, status, page, pageSize });
 
-    // Extract sessionId and userId from config metadata (injected by custom ToolNode)
-    const sessionId = (config as any)?.metadata?.sessionId;
-    const userId = (config as any)?.metadata?.userId;
-
-    console.log(`[PropertyFilterSortTool] Using sessionId: ${sessionId}, userId: ${userId}`);
+    if (!searchId) {
+      return JSON.stringify({
+        success: false,
+        error: 'searchId is required',
+        suggestion: 'Call property_search first to get a searchId',
+      }, null, 2);
+    }
 
     try {
-      // Create HTTPS agent that bypasses SSL verification for localhost
-      const httpsAgent = new https.Agent({
-        rejectUnauthorized: false,
-      });
+      const startTime = Date.now();
 
-      const apiUrl = 'https://localhost:3001';
-      const endpoint = `${apiUrl}/api/search-results/${searchId}/execute`;
-
-      console.log(`[PropertyFilterSortTool] Calling: ${endpoint}`);
-
-      // Make API request to sandbox execution endpoint
-      const response = await fetch(endpoint, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
+      // Use SQL-based filtering from search-results.ts
+      const { results, pageInfo } = await getSearchResultsFromDB({
+        searchId,
+        sortBy: sortBy || 'combined_score',
+        sortOrder: sortOrder || 'desc',
+        filters: {
+          minPrice,
+          maxPrice,
+          minBeds,
+          maxBeds,
+          cities,
+          status,
         },
-        body: JSON.stringify({
-          code,
-          filterResults: saveResults,  // Save to filtered_results column
-          timeout: 10000,  // 10 second timeout
-        }),
-        // @ts-ignore - Node.js fetch supports agent option
-        agent: httpsAgent,
+        page: page || 1,
+        pageSize: Math.min(pageSize || 20, 100),
       });
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`API returned ${response.status}: ${errorText}`);
-      }
-
-      const data = await response.json() as any;
-
-      // Handle execution errors
-      if (!data.success) {
-        console.error('[PropertyFilterSortTool] Execution failed:', data.error);
-
-        return JSON.stringify({
-          success: false,
-          error: data.error?.message || 'Unknown error',
-          errorCode: data.error?.code || 'EXECUTION_ERROR',
-          searchId,
-          note: 'Code execution failed. Check syntax and try again.',
-        }, null, 2);
-      }
-
-      console.log(`[PropertyFilterSortTool] Execution successful in ${data.executionTimeMs}ms`);
-      console.log(`[PropertyFilterSortTool] Result type: ${Array.isArray(data.data) ? `array[${data.data.length}]` : typeof data.data}`);
+      const executionTime = Date.now() - startTime;
+      console.log(`[PropertyFilterSortTool] SQL query completed in ${executionTime}ms, returned ${results.length} results`);
 
       // Apply smart response limiting
       const limitedResponse = createLimitedResponse(
-        data.data,
+        results,
         searchId,
-        data.executionTimeMs,
+        executionTime,
         TOOL_RESPONSE_LIMITS
       );
 
-      // Add success flag and preserve metadata
-      const response_with_success = {
+      return JSON.stringify({
         success: true,
         ...limitedResponse,
-        metadata: data.metadata  // Preserve originalCount and other metadata
-      };
-
-      return formatLimitedResponse(response_with_success);
+        searchId,
+        pageInfo,
+        appliedFilters: {
+          sortBy: sortBy || 'combined_score',
+          sortOrder: sortOrder || 'desc',
+          minPrice,
+          maxPrice,
+          minBeds,
+          maxBeds,
+          cities,
+          status,
+        },
+        source: 'elasticsearch',
+        note: `Filtered ${pageInfo.totalItems} properties. Page ${pageInfo.page} of ${pageInfo.totalPages}.`
+      }, null, 2);
 
     } catch (error) {
       console.error('[PropertyFilterSortTool] Error:', error);
 
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-
       return JSON.stringify({
         success: false,
-        error: errorMessage,
+        error: error instanceof Error ? error.message : 'Unknown error',
         searchId,
-        note: 'Failed to execute filter/sort operation. Check searchId and try again.',
+        suggestion: 'Check searchId and try again',
       }, null, 2);
     }
   },
 });
 
 /**
- * Property Get Details Tool
+ * Property Get Details Tool (ES Database Only)
  *
- * Retrieve detailed information about a specific property without truncation.
- * Use this when user asks about a specific property by ListingKey or address.
+ * Retrieve detailed information about a specific property.
+ * Uses the unified property_search PostgreSQL database.
  */
 export const propertyGetDetailsTool = new DynamicStructuredTool({
   name: "property_get_details",
@@ -203,8 +176,8 @@ WORKFLOW:
 1. First call: property_search with user's address/query → get searchId
 2. Then call: property_get_details with searchId + listingKey/address → get full details
 
-This tool retrieves FULL property details without truncation - perfect for when
-the user asks about a specific property.
+This tool retrieves FULL property details - perfect for when the user asks about
+a specific property.
 
 Use this tool when the user asks about:
 - A specific property's details ("Tell me about property A1234567")
@@ -212,57 +185,30 @@ Use this tool when the user asks about:
 - Comparing specific properties ("Compare the HOA fees")
 - Properties at a specific address ("Details for 123 Ocean Drive")
 
-Unlike property_filter_sort which returns truncated responses, this tool:
-- Returns ALL property fields (50+ MLS fields) by default
-- No token truncation for single property (~500-800 tokens)
-- Can filter to specific fields only to reduce response size
-- Fast lookup by ListingKey (exact match) or address (fuzzy match)
+Property lookup methods:
+- listingKey: Fast direct database lookup (preferred)
+- address: Fuzzy text matching against all results
 
 Common MLS fields available:
-Basic Info:
-  - ListingKey: Unique property ID
-  - UnparsedAddress: Full address
-  - ListPrice: List price
-  - BedroomsTotal, BathroomsTotalInteger: Bed/bath count
-
-Size & Construction:
-  - LivingArea: Square footage
-  - LotSizeSquareFeet: Lot size
-  - YearBuilt: Year built
-
-Features & Amenities:
-  - PoolYN: Has pool (true/false)
-  - WaterfrontYN: Waterfront property (true/false)
-  - GarageSpaces: Number of garage spaces
-  - FireplacesTotal: Number of fireplaces
-
-Financial:
-  - AssociationFee: Monthly HOA fee
-  - TaxAnnualAmount: Annual property taxes
-
-Listing Info:
-  - StandardStatus: Active, Pending, Sold, etc.
-  - DaysOnMarket: Days listed
-  - ListingContractDate: When listed
-
-Plus 40+ more MLS fields!
-
-REMINDER: Always call property_search first to get searchId before using this tool.`,
+- ListingKey, UnparsedAddress, ListPrice
+- BedroomsTotal, BathroomsTotalInteger, LivingArea
+- YearBuilt, LotSizeSquareFeet
+- PoolYN, WaterfrontYN, GarageSpaces
+- AssociationFee, TaxAnnualAmount
+- StandardStatus, DaysOnMarket
+- Plus 40+ more MLS fields!`,
 
   schema: z.object({
-    searchId: z.string().optional().describe("UUID of the search result containing the property. REQUIRED (unless auto-injected). Get this by calling property_search tool first."),
-    listingKey: z.string().optional().describe("Property's ListingKey for exact match (preferred method). Get from property_search results."),
-    address: z.string().optional().describe("Property address for fuzzy matching (alternative to listingKey when you have searchId but not ListingKey)."),
-    fields: z.array(z.string()).optional().describe("Optional: specific fields to return (e.g., ['YearBuilt', 'PoolYN']). If omitted, returns ALL fields.")
+    searchId: z.string().describe("UUID of the search result containing the property"),
+    listingKey: z.string().optional().describe("Property's ListingKey for direct lookup (preferred method)"),
+    address: z.string().optional().describe("Property address for fuzzy matching (alternative to listingKey)"),
+    fields: z.array(z.string()).optional().describe("Optional: specific fields to return (e.g., ['YearBuilt', 'PoolYN'])")
   }),
 
   func: async ({ searchId, listingKey, address, fields }, config) => {
-    console.log(`[PropertyGetDetailsTool] Retrieving property details for searchId: ${searchId}`);
-    console.log(`[PropertyGetDetailsTool] ListingKey: ${listingKey || 'not provided'}`);
-    console.log(`[PropertyGetDetailsTool] Address: ${address || 'not provided'}`);
-    console.log(`[PropertyGetDetailsTool] Fields: ${fields ? fields.join(', ') : 'all fields'}`);
+    console.log(`[PropertyGetDetailsTool] Retrieving property for searchId: ${searchId}`);
+    console.log(`[PropertyGetDetailsTool] ListingKey: ${listingKey || 'not provided'}, Address: ${address || 'not provided'}`);
 
-    // Validate that at least one identifier is provided
     if (!listingKey && !address) {
       return JSON.stringify({
         success: false,
@@ -272,87 +218,51 @@ REMINDER: Always call property_search first to get searchId before using this to
       }, null, 2);
     }
 
-    // Extract sessionId and userId from config metadata (injected by custom ToolNode)
-    const sessionId = (config as any)?.metadata?.sessionId;
-    const userId = (config as any)?.metadata?.userId;
-
-    console.log(`[PropertyGetDetailsTool] Using sessionId: ${sessionId}, userId: ${userId}`);
+    if (!searchId) {
+      return JSON.stringify({
+        success: false,
+        error: 'searchId is required',
+        suggestion: 'Call property_search first to get a searchId',
+      }, null, 2);
+    }
 
     try {
-      // Create HTTPS agent that bypasses SSL verification for localhost
-      const httpsAgent = new https.Agent({
-        rejectUnauthorized: false,
-      });
-
-      const apiUrl = 'https://localhost:3001';
-      const endpoint = `${apiUrl}/api/search-results/${searchId}`;
-
-      console.log(`[PropertyGetDetailsTool] Fetching search results from: ${endpoint}`);
-
-      // Fetch search results to access properties
-      const response = await fetch(endpoint, {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        // @ts-ignore - Node.js fetch supports agent option
-        agent: httpsAgent,
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`API returned ${response.status}: ${errorText}`);
-      }
-
-      const result = await response.json() as any;
-
-      if (!result.success || !result.data) {
-        console.error('[PropertyGetDetailsTool] API error:', result.error);
-
-        return JSON.stringify({
-          success: false,
-          error: result.error?.message || 'Search result not found',
-          searchId,
-          suggestion: 'Use property_search to create a new search first'
-        }, null, 2);
-      }
-
-      const searchResult = result.data;
-      const properties = searchResult.properties || [];
-
-      console.log(`[PropertyGetDetailsTool] Loaded ${properties.length} properties`);
-
-      if (properties.length === 0) {
-        return JSON.stringify({
-          success: false,
-          error: 'Search result contains no properties',
-          searchId,
-          suggestion: 'Try a different search query'
-        }, null, 2);
-      }
-
-      // Find the specific property
       let property = null;
 
-      // Priority 1: Exact match by ListingKey
+      // Method 1: Direct lookup by listingKey (fast, indexed)
       if (listingKey) {
-        property = properties.find((p: any) => p.ListingKey === listingKey);
-        console.log(`[PropertyGetDetailsTool] ListingKey exact match: ${property ? 'found' : 'not found'}`);
+        console.log(`[PropertyGetDetailsTool] Direct lookup by listingKey: ${listingKey}`);
+        property = await getPropertyByListingKey(searchId, listingKey);
+
+        if (property) {
+          console.log(`[PropertyGetDetailsTool] Found property by listingKey`);
+        }
       }
 
-      // Priority 2: Fuzzy match by address
+      // Method 2: Fuzzy address search (slower, needs to scan results)
       if (!property && address) {
+        console.log(`[PropertyGetDetailsTool] Searching by address: ${address}`);
+        const { results } = await getSearchResultsFromDB({
+          searchId,
+          page: 1,
+          pageSize: 500,
+        });
+
         const normalizedAddress = address.toLowerCase().trim();
-        property = properties.find((p: any) =>
+        property = results.find((p: any) =>
+          p.address?.toLowerCase().includes(normalizedAddress) ||
           p.UnparsedAddress?.toLowerCase().includes(normalizedAddress)
         );
-        console.log(`[PropertyGetDetailsTool] Address fuzzy match: ${property ? 'found' : 'not found'}`);
+
+        if (property) {
+          console.log(`[PropertyGetDetailsTool] Found property by address fuzzy match`);
+        }
       }
 
-      // Property not found
       if (!property) {
-        // Get sample ListingKeys for helpful error message
-        const sampleKeys = properties.slice(0, 5).map((p: any) => p.ListingKey).filter(Boolean);
+        // Get sample listing keys for suggestion
+        const { results } = await getSearchResultsFromDB({ searchId, page: 1, pageSize: 5 });
+        const sampleKeys = results.map((p: any) => p.listingKey).filter(Boolean);
 
         return JSON.stringify({
           success: false,
@@ -361,12 +271,9 @@ REMINDER: Always call property_search first to get searchId before using this to
             : `Property not found matching address: ${address}`,
           searchId,
           availableListings: sampleKeys,
-          totalProperties: properties.length,
-          suggestion: 'Use property_get_results to see all available properties and their ListingKeys'
+          suggestion: 'Use property_filter_sort to see all available properties'
         }, null, 2);
       }
-
-      console.log(`[PropertyGetDetailsTool] Property found: ${property.UnparsedAddress}`);
 
       // Filter to specific fields if requested
       let propertyData = property;
@@ -377,29 +284,25 @@ REMINDER: Always call property_search first to get searchId before using this to
           }
           return acc;
         }, {});
-
-        console.log(`[PropertyGetDetailsTool] Filtered to ${fields.length} fields`);
       }
 
-      // Return full property details (no truncation)
       return JSON.stringify({
         success: true,
         property: propertyData,
         searchId,
+        source: 'elasticsearch',
         fieldsReturned: fields || 'all',
         note: fields && fields.length > 0
           ? `Returned ${fields.length} requested fields`
-          : 'Full property details returned (all 50+ MLS fields, no truncation)'
+          : 'Full property details returned'
       }, null, 2);
 
     } catch (error) {
       console.error('[PropertyGetDetailsTool] Error:', error);
 
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-
       return JSON.stringify({
         success: false,
-        error: errorMessage,
+        error: error instanceof Error ? error.message : 'Unknown error',
         searchId,
         suggestion: 'Check searchId and try again'
       }, null, 2);
@@ -408,17 +311,16 @@ REMINDER: Always call property_search first to get searchId before using this to
 });
 
 /**
- * Property Get Results Tool
+ * Property Get Results Tool (ES Database Only)
  *
- * Retrieve full search results (including filtered results) by searchId.
- * Returns truncated response to LLM, full data available to frontend.
+ * Retrieve property search results by searchId.
+ * Uses the unified property_search PostgreSQL database.
  */
 export const propertyGetResultsTool = new DynamicStructuredTool({
   name: "property_get_results",
   description: `Retrieve property search results by searchId.
 
-This tool fetches a search result from the database, including both original
-properties and any filtered results that were saved via property_filter_sort.
+This tool fetches search results from the database with pagination support.
 
 IMPORTANT: This tool returns TRUNCATED responses to save LLM context:
 - Arrays with ≤20 items: Full essential fields returned
@@ -427,127 +329,83 @@ IMPORTANT: This tool returns TRUNCATED responses to save LLM context:
 
 Use cases:
 - Retrieve results from a previous search
-- Get filtered results that were saved earlier
 - Check what properties are currently displayed on frontend
 - Access search metadata and query information
 
 The response includes:
 - Essential property fields (ListingKey, address, price, beds, baths, sqft, city)
 - Statistics (price range, bedroom range, city distribution)
-- Search metadata (query, filters, timestamps)
-- Filtered results if available
+- Search metadata (query, timestamps)
+- Pagination info (page, pageSize, totalPages)
 
 Frontend always has access to full property data via the same searchId.`,
 
   schema: z.object({
-    searchId: z.string().optional().describe("UUID of the search result to retrieve. OPTIONAL - will be auto-injected from active search session if not provided."),
-    includeFiltered: z.boolean().default(true).describe("Whether to include filtered results if available (default: true)")
+    searchId: z.string().describe("UUID of the search result to retrieve"),
+    page: z.number().optional().describe("Page number (default: 1)"),
+    pageSize: z.number().optional().describe("Results per page (default: 20, max: 100)")
   }),
 
-  func: async ({ searchId, includeFiltered }, config) => {
-    console.log(`[PropertyGetResultsTool] Retrieving searchId: ${searchId}`);
-    console.log(`[PropertyGetResultsTool] Include filtered: ${includeFiltered}`);
+  func: async ({ searchId, page, pageSize }, config) => {
+    console.log(`[PropertyGetResultsTool] Retrieving searchId: ${searchId}, page: ${page || 1}`);
 
-    // Extract sessionId and userId from config metadata (injected by custom ToolNode)
-    const sessionId = (config as any)?.metadata?.sessionId;
-    const userId = (config as any)?.metadata?.userId;
-
-    console.log(`[PropertyGetResultsTool] Using sessionId: ${sessionId}, userId: ${userId}`);
+    if (!searchId) {
+      return JSON.stringify({
+        success: false,
+        error: 'searchId is required',
+        suggestion: 'Call property_search first to get a searchId',
+      }, null, 2);
+    }
 
     try {
-      // Create HTTPS agent that bypasses SSL verification for localhost
-      const httpsAgent = new https.Agent({
-        rejectUnauthorized: false,
+      const { results, pageInfo } = await getSearchResultsFromDB({
+        searchId,
+        page: page || 1,
+        pageSize: Math.min(pageSize || 20, 100),
       });
 
-      const apiUrl = 'https://localhost:3001';
-      const endpoint = `${apiUrl}/api/search-results/${searchId}`;
+      // Get metadata for additional context
+      const metadata = await getSearchMetadata(searchId);
 
-      console.log(`[PropertyGetResultsTool] Calling: ${endpoint}`);
-
-      // Make API request to get search results
-      const response = await fetch(endpoint, {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        // @ts-ignore - Node.js fetch supports agent option
-        agent: httpsAgent,
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`API returned ${response.status}: ${errorText}`);
-      }
-
-      const result = await response.json() as any;
-
-      // Handle API errors
-      if (!result.success || !result.data) {
-        console.error('[PropertyGetResultsTool] API error:', result.error);
-
+      if (results.length === 0 && !metadata) {
         return JSON.stringify({
           success: false,
-          error: result.error?.message || 'Search result not found',
-          errorCode: result.error?.code || 'NOT_FOUND',
+          error: 'Search result not found',
           searchId,
-          note: 'Search result not found. Check searchId and try again.',
+          suggestion: 'The searchId may have expired. Run a new property_search.',
         }, null, 2);
       }
 
-      const searchResult = result.data;
-
-      console.log(`[PropertyGetResultsTool] Found search result:`);
-      console.log(`  - Query: ${searchResult.query}`);
-      console.log(`  - Original properties: ${searchResult.properties?.length || 0}`);
-      console.log(`  - Has filtered results: ${!!searchResult.filteredResults}`);
-
-      // Determine which properties to return
-      let propertiesToReturn = searchResult.properties || [];
-      let isFiltered = false;
-
-      if (includeFiltered && searchResult.filteredResults) {
-        // Use filtered results if available
-        propertiesToReturn = Array.isArray(searchResult.filteredResults)
-          ? searchResult.filteredResults
-          : searchResult.properties || [];
-        isFiltered = Array.isArray(searchResult.filteredResults);
-      }
+      console.log(`[PropertyGetResultsTool] Found ${results.length} results (page ${pageInfo.page} of ${pageInfo.totalPages})`);
 
       // Apply smart response limiting
       const limitedResponse = createLimitedResponse(
-        propertiesToReturn,
+        results,
         searchId,
-        0, // No execution time for GET
+        0,
         TOOL_RESPONSE_LIMITS
       );
 
-      // Add metadata
-      const response_with_metadata = {
+      return JSON.stringify({
         success: true,
         ...limitedResponse,
-        query: searchResult.query,
-        totalFound: searchResult.totalFound,
-        hasMore: searchResult.hasMore,
-        isFiltered,
-        originalCount: searchResult.properties?.length || 0,
-        filteredCount: isFiltered ? propertiesToReturn.length : null,
-        createdAt: searchResult.createdAt,
-        updatedAt: searchResult.updatedAt
-      };
-
-      return formatLimitedResponse(response_with_metadata);
+        searchId,
+        query: metadata?.queryText || 'Unknown query',
+        totalCount: pageInfo.totalItems,
+        pageInfo,
+        hasMore: pageInfo.page < pageInfo.totalPages,
+        source: 'elasticsearch',
+        createdAt: metadata?.createdAt,
+      }, null, 2);
 
     } catch (error) {
       console.error('[PropertyGetResultsTool] Error:', error);
 
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-
       return JSON.stringify({
         success: false,
-        error: errorMessage,
+        error: error instanceof Error ? error.message : 'Unknown error',
         searchId,
-        note: 'Failed to retrieve search results. Check searchId and try again.',
+        suggestion: 'Check searchId and try again',
       }, null, 2);
     }
   },

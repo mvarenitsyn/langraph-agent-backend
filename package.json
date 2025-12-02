@@ -23,6 +23,7 @@
     "openai"
   ],
   "dependencies": {
+    "@elastic/elasticsearch": "^8.19.1",
     "@google-cloud/pubsub": "^5.2.0",
     "@langchain/core": "^1.0.3",
     "@langchain/langgraph": "^1.0.1",
@@ -30,8 +31,10 @@
     "@langchain/openai": "^1.0.0",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
+    "isolated-vm": "^5.0.4",
     "openai": "^4.77.3",
     "pg": "^8.13.1",
+    "vm2": "^3.10.0",
     "zod": "^3.24.1"
   },
   "devDependencies": {

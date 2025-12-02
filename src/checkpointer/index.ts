@@ -1,60 +1,105 @@
 import { PostgresSaver } from "@langchain/langgraph-checkpoint-postgres";
+import { MemorySaver } from "@langchain/langgraph";
 import { config } from "../config/index.js";
 
 /**
- * PostgreSQL Checkpointer
+ * PostgreSQL Checkpointer with Cloud Run resilience
  *
  * Provides persistent checkpoint storage for LangGraph agents.
- * Enables conversation memory, state persistence, and time-travel debugging.
+ * Handles Cloud Run cold starts and connection recovery.
  */
 
 let checkpointerInstance: PostgresSaver | null = null;
+let memoryFallback: MemorySaver | null = null;
+let lastConnectionAttempt: number = 0;
+const CONNECTION_RETRY_INTERVAL = 30000; // 30 seconds between retry attempts
 
 /**
- * Create and initialize PostgreSQL checkpointer
+ * Create PostgreSQL checkpointer with connection pool settings optimized for Cloud Run
  */
-export async function createCheckpointer(): Promise<PostgresSaver> {
+async function createPostgresCheckpointer(): Promise<PostgresSaver> {
+  // Add connection pool settings to handle Cloud Run scaling
+  const connectionString = config.database.url;
+
+  // Parse and add pool configuration
+  const url = new URL(connectionString);
+  url.searchParams.set('connection_limit', '3');
+  url.searchParams.set('pool_timeout', '10');
+  url.searchParams.set('idle_timeout', '30');
+  url.searchParams.set('connect_timeout', '10');
+
+  const checkpointer = PostgresSaver.fromConnString(url.toString());
+  await checkpointer.setup();
+
+  return checkpointer;
+}
+
+/**
+ * Create and initialize PostgreSQL checkpointer with fallback to memory
+ */
+export async function createCheckpointer(): Promise<PostgresSaver | MemorySaver> {
+  // If we have a working postgres instance, return it
   if (checkpointerInstance) {
     return checkpointerInstance;
   }
 
+  // If postgres failed recently, use memory fallback
+  const now = Date.now();
+  if (memoryFallback && (now - lastConnectionAttempt) < CONNECTION_RETRY_INTERVAL) {
+    console.log('[Checkpointer] Using memory fallback (postgres cooldown)');
+    return memoryFallback;
+  }
+
   console.log('[Checkpointer] Initializing PostgreSQL checkpointer...');
+  lastConnectionAttempt = now;
 
   try {
-    // Create checkpointer from connection string
-    const checkpointer = PostgresSaver.fromConnString(config.database.url);
-
-    // Setup database tables if not exists
-    await checkpointer.setup();
-
+    const checkpointer = await createPostgresCheckpointer();
     checkpointerInstance = checkpointer;
     console.log('[Checkpointer] ✓ PostgreSQL checkpointer initialized');
-
     return checkpointer;
   } catch (error) {
-    console.error('[Checkpointer] ✗ Failed to initialize checkpointer:', error);
-    throw new Error(`Checkpointer initialization failed: ${error}`);
+    console.error('[Checkpointer] ✗ PostgreSQL failed, using memory fallback:', error);
+
+    // Create memory fallback if not exists
+    if (!memoryFallback) {
+      memoryFallback = new MemorySaver();
+      console.log('[Checkpointer] ✓ Memory fallback initialized');
+    }
+
+    // Clear failed postgres instance
+    checkpointerInstance = null;
+
+    return memoryFallback;
   }
 }
 
 /**
- * Get the existing checkpointer instance
+ * Reset the checkpointer (call on connection errors)
  */
-export function getCheckpointer(): PostgresSaver {
-  if (!checkpointerInstance) {
-    throw new Error('Checkpointer not initialized. Call createCheckpointer() first.');
+export function resetCheckpointer(): void {
+  console.log('[Checkpointer] Resetting connection...');
+  checkpointerInstance = null;
+}
+
+/**
+ * Get the existing checkpointer instance (postgres or memory fallback)
+ */
+export function getCheckpointer(): PostgresSaver | MemorySaver {
+  if (checkpointerInstance) {
+    return checkpointerInstance;
   }
-  return checkpointerInstance;
+  if (memoryFallback) {
+    return memoryFallback;
+  }
+  throw new Error('Checkpointer not initialized. Call createCheckpointer() first.');
 }
 
 /**
  * Close the checkpointer connection
  */
 export async function closeCheckpointer(): Promise<void> {
-  if (checkpointerInstance) {
-    // PostgresSaver doesn't have an explicit close method,
-    // but we can clear the instance reference
-    checkpointerInstance = null;
-    console.log('[Checkpointer] ✓ Checkpointer connection closed');
-  }
+  checkpointerInstance = null;
+  memoryFallback = null;
+  console.log('[Checkpointer] ✓ Checkpointer connections cleared');
 }
