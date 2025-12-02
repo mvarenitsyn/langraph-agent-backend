@@ -82,8 +82,14 @@ function getPubSubClient(): PubSub {
       console.log('[PubSub] Recreating client to prevent stale connections');
     }
 
+    // Explicitly set projectId to avoid issues on VMs where metadata returns the VM's project
+    const projectId = process.env.GCP_PROJECT_ID || process.env.GOOGLE_CLOUD_PROJECT;
+    if (projectId) {
+      console.log(`[PubSub] Using project: ${projectId}`);
+    }
+
     pubsubInstance = new PubSub({
-      // Project ID auto-detected from GCP metadata
+      projectId,  // Explicit project ID for cross-project Pub/Sub access
       ...(process.env.PUBSUB_EMULATOR_HOST && {
         apiEndpoint: process.env.PUBSUB_EMULATOR_HOST,
       }),
