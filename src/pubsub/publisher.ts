@@ -4,6 +4,7 @@
  */
 
 import { PubSub, PublishOptions, Topic } from '@google-cloud/pubsub';
+import { reportPubSubError, reportPubSubSuccess } from './shared.js';
 
 // Topic cache with TTL to prevent stale topics
 interface CachedTopic {
@@ -75,9 +76,11 @@ export class AgentPublisher {
       };
 
       await topic.publishMessage({ json: message });
+      reportPubSubSuccess();
       console.log(`[Publisher] Published task response: ${data.correlationId}`);
     } catch (error) {
       // Non-blocking: Don't crash agent on Pub/Sub timeouts
+      reportPubSubError();
       console.warn('[Publisher] Failed to publish task response (non-fatal):', error instanceof Error ? error.message : String(error));
     }
   }
@@ -116,9 +119,11 @@ export class AgentPublisher {
       };
 
       await topic.publishMessage({ json: message });
+      reportPubSubSuccess();
       console.log(`[Publisher] Published stream update: ${data.eventType}`);
     } catch (error) {
       // Non-blocking: Don't crash agent on Pub/Sub timeouts
+      reportPubSubError();
       console.warn('[Publisher] Failed to publish stream update (non-fatal):', error instanceof Error ? error.message : String(error));
     }
   }
@@ -157,6 +162,7 @@ export class AgentPublisher {
       };
 
       await topic.publishMessage({ json: message });
+      reportPubSubSuccess(); // Track success for adaptive client recreation
       // Log first chunk and completion markers for debugging
       if (data.isComplete || data.chunk.length < 10) {
         console.log(`[Publisher] Published text chunk: messageId=${data.messageId}, nodeId=${data.nodeId}, isComplete=${data.isComplete}, chunk="${data.chunk.substring(0, 30)}"`);
@@ -164,6 +170,7 @@ export class AgentPublisher {
     } catch (error) {
       // Non-blocking: Don't fail agent execution if chunk publishing fails
       // This can happen due to Pub/Sub client caching or topic not existing yet
+      reportPubSubError(); // Track error for adaptive client recreation
       console.warn('[Publisher] Failed to publish text chunk (non-fatal):', error instanceof Error ? error.message : String(error));
     }
   }
@@ -238,9 +245,11 @@ export class AgentPublisher {
       };
 
       await topic.publishMessage({ json: message });
+      reportPubSubSuccess();
       console.log(`[Publisher] Progress: ${data.status}`);
     } catch (error) {
       // Non-fatal - don't block execution
+      reportPubSubError();
       console.warn('[Publisher] Failed to publish progress (non-fatal):', error instanceof Error ? error.message : String(error));
     }
   }

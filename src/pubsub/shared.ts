@@ -10,28 +10,33 @@ import { PubSub, PublishOptions } from '@google-cloud/pubsub';
 import { AgentPublisher } from './publisher.js';
 
 // Cloud Run-optimized publish settings
-// Faster failure + fewer retries = better UX when Pub/Sub is unhealthy
+// Balance between fast streaming and Cloud Run cold start resilience
 const publishSettings: PublishOptions = {
   batching: {
     maxBytes: 1024 * 1024, // 1 MB
     maxMessages: 100,
-    maxMilliseconds: 10, // Flush quickly for real-time streaming
+    maxMilliseconds: 100, // Increased from 10ms to reduce publish frequency/backpressure
   },
   gaxOpts: {
-    timeout: 10000, // 10 second timeout (vs default 60s)
+    timeout: 30000, // 30 second timeout (increased from 10s for cold starts)
     retry: {
-      // Fail fast on Cloud Run - don't block agent execution
-      retryCodes: [14], // Only retry UNAVAILABLE, not DEADLINE_EXCEEDED
+      // Retry both UNAVAILABLE and DEADLINE_EXCEEDED
+      retryCodes: [14, 4], // UNAVAILABLE + DEADLINE_EXCEEDED
       backoffSettings: {
         initialRetryDelayMillis: 100,
-        retryDelayMultiplier: 1.3,
-        maxRetryDelayMillis: 1000,
-        initialRpcTimeoutMillis: 5000,
-        rpcTimeoutMultiplier: 1.0,
-        maxRpcTimeoutMillis: 10000,
-        totalTimeoutMillis: 15000, // Max 15s total (vs 60s default)
+        retryDelayMultiplier: 2, // Faster exponential backoff
+        maxRetryDelayMillis: 5000,
+        initialRpcTimeoutMillis: 10000,
+        rpcTimeoutMultiplier: 1.5,
+        maxRpcTimeoutMillis: 30000,
+        totalTimeoutMillis: 60000, // 60s total (increased from 15s)
       },
     },
+  },
+  // Flow control to prevent backpressure when publishing faster than network can handle
+  flowControlOptions: {
+    maxOutstandingMessages: 100,
+    maxOutstandingBytes: 10 * 1024 * 1024, // 10MB
   },
 };
 
@@ -40,6 +45,33 @@ const publishSettings: PublishOptions = {
 let pubsubInstance: PubSub | null = null;
 let lastCreated = 0;
 const CLIENT_MAX_AGE_MS = 5 * 60 * 1000; // Recreate client every 5 minutes
+
+// Error tracking for adaptive client recreation
+let consecutiveErrors = 0;
+const MAX_ERRORS_BEFORE_RECREATION = 3;
+
+/**
+ * Report a Pub/Sub publish error - triggers client recreation after consecutive failures
+ */
+export function reportPubSubError(): void {
+  consecutiveErrors++;
+  if (consecutiveErrors >= MAX_ERRORS_BEFORE_RECREATION) {
+    console.log(`[PubSub] ${consecutiveErrors} consecutive errors, forcing client recreation`);
+    pubsubInstance = null;
+    lastCreated = 0;
+    consecutiveErrors = 0;
+  }
+}
+
+/**
+ * Report a successful Pub/Sub publish - resets error counter
+ */
+export function reportPubSubSuccess(): void {
+  if (consecutiveErrors > 0) {
+    console.log(`[PubSub] Success after ${consecutiveErrors} errors, resetting counter`);
+  }
+  consecutiveErrors = 0;
+}
 
 function getPubSubClient(): PubSub {
   const now = Date.now();

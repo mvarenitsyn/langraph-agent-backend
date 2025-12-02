@@ -113,15 +113,23 @@ class ResilientPostgresSaver extends BaseCheckpointSaver {
  * Create PostgreSQL checkpointer with connection pool settings optimized for Cloud Run
  */
 async function createPostgresCheckpointer(): Promise<PostgresSaver> {
-  // Add connection pool settings to handle Cloud Run scaling
+  // Add connection pool settings optimized for Cloud Run
+  // - Longer idle timeout prevents premature connection drops
+  // - TCP keep-alive detects stale connections before errors
   const connectionString = config.database.url;
 
   // Parse and add pool configuration
   const url = new URL(connectionString);
   url.searchParams.set('connection_limit', '3');
   url.searchParams.set('pool_timeout', '10');
-  url.searchParams.set('idle_timeout', '30');
+  url.searchParams.set('idle_timeout', '600');  // 10 minutes (was 30s) - Cloud Run containers can be idle
   url.searchParams.set('connect_timeout', '10');
+
+  // TCP Keep-Alive settings - detect stale connections before they cause errors
+  url.searchParams.set('keepalives', '1');
+  url.searchParams.set('keepalives_idle', '30');     // Start probing after 30s idle
+  url.searchParams.set('keepalives_interval', '10'); // Probe every 10s
+  url.searchParams.set('keepalives_count', '5');     // Give up after 5 failed probes
 
   const checkpointer = PostgresSaver.fromConnString(url.toString());
   await checkpointer.setup();
