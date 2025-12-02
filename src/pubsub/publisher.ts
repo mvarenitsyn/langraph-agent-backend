@@ -3,10 +3,45 @@
  * Publishes agent responses and streaming events
  */
 
-import { PubSub } from '@google-cloud/pubsub';
+import { PubSub, PublishOptions, Topic } from '@google-cloud/pubsub';
+
+// Topic cache with TTL to prevent stale topics
+interface CachedTopic {
+  topic: Topic;
+  createdAt: number;
+}
+
+const TOPIC_CACHE_TTL_MS = 60 * 1000; // Refresh topic references every 60s
 
 export class AgentPublisher {
-  constructor(private pubsub: PubSub) {}
+  private topicCache: Map<string, CachedTopic> = new Map();
+
+  constructor(
+    private pubsub: PubSub,
+    private publishOptions?: PublishOptions
+  ) {}
+
+  /**
+   * Get topic with caching and Cloud Run optimized settings
+   * Refreshes topic references periodically to avoid stale gRPC streams
+   */
+  private getTopic(topicName: string): Topic {
+    const cached = this.topicCache.get(topicName);
+    const now = Date.now();
+
+    // Return cached topic if still fresh
+    if (cached && (now - cached.createdAt) < TOPIC_CACHE_TTL_MS) {
+      return cached.topic;
+    }
+
+    // Create new topic reference with publish options
+    const topic = this.publishOptions
+      ? this.pubsub.topic(topicName, this.publishOptions)
+      : this.pubsub.topic(topicName);
+
+    this.topicCache.set(topicName, { topic, createdAt: now });
+    return topic;
+  }
 
   /**
    * Publish agent task response (final result)
@@ -21,7 +56,7 @@ export class AgentPublisher {
     error?: any;
   }): Promise<void> {
     try {
-      const topic = this.pubsub.topic('agent.task.response');
+      const topic = this.getTopic('agent.task.response');
 
       const message = {
         type: 'agent.task.response',
@@ -61,7 +96,7 @@ export class AgentPublisher {
     data?: any;
   }): Promise<void> {
     try {
-      const topic = this.pubsub.topic('agent.streaming.update');
+      const topic = this.getTopic('agent.streaming.update');
 
       const message = {
         type: 'agent.streaming.update',
@@ -101,8 +136,8 @@ export class AgentPublisher {
     isComplete?: boolean;
   }): Promise<void> {
     try {
-      // Get topic reference (topic should exist at startup)
-      const topic = this.pubsub.topic('agent.text.stream');
+      // Get topic reference with Cloud Run optimized settings
+      const topic = this.getTopic('agent.text.stream');
 
       const message = {
         type: 'agent.text.stream',
@@ -146,7 +181,7 @@ export class AgentPublisher {
     statusMessage: string;
   }): Promise<void> {
     try {
-      const topic = this.pubsub.topic('agent.text.stream');
+      const topic = this.getTopic('agent.text.stream');
 
       const message = {
         type: 'agent.text.stream',
@@ -186,7 +221,7 @@ export class AgentPublisher {
     status: string;  // Concise status (max 10 words): "Analyzing query...", "Filtering 50 properties..."
   }): Promise<void> {
     try {
-      const topic = this.pubsub.topic('agent.progress.update');
+      const topic = this.getTopic('agent.progress.update');
 
       const message = {
         type: 'agent.progress.update',
