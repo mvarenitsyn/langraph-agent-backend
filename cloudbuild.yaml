@@ -39,7 +39,7 @@ steps:
       - '--max-instances=10'
       - '--concurrency=80'
       - '--cpu-throttling'
-      - '--set-env-vars=NODE_ENV=production,OPENAI_MODEL=gpt-4o-mini,PERPLEXITY_MODEL=llama-3.1-sonar-small-128k-online,PORT=3003'
+      - '--set-env-vars=NODE_ENV=production,GCP_PROJECT_ID=rgaautomations,OPENAI_MODEL=gpt-4o-mini,PERPLEXITY_MODEL=llama-3.1-sonar-small-128k-online'
       - '--update-secrets=OPENAI_API_KEY=OPENAI_API_KEY:latest,DATABASE_URL=DATABASE_URL:latest,PERPLEXITY_API_KEY=PERPLEXITY_API_KEY:latest'
     timeout: 300s
 
@@ -51,11 +51,6 @@ options:
 
 # Total timeout for entire build
 timeout: 1200s
-
-# Substitutions (available as $VARIABLE_NAME in steps)
-substitutions:
-  _SERVICE_NAME: 'realvistai'
-  _REGION: 'us-central1'
 
 # Artifact Registry repository
 images:
