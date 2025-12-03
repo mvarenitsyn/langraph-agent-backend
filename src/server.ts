@@ -13,6 +13,7 @@ import {
   createFinalEvent,
   createErrorEvent
 } from './utils/streaming.js';
+import { getSearchResults, getSearchMetadata } from './subgraphs/property-search/db/search-results.js';
 
 /**
  * Express Server with Streaming Support
@@ -200,6 +201,52 @@ app.get('/history/:threadId', async (req: Request, res: Response) => {
     });
   } catch (error) {
     console.error('[Server] Error:', error);
+    res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+});
+
+/**
+ * Get search results by searchId
+ * Returns properties from PostgreSQL that were saved during search
+ */
+app.get('/search-results/:searchId', async (req: Request, res: Response) => {
+  const { searchId } = req.params;
+  const { page = '1', pageSize = '50', sortBy, sortOrder } = req.query;
+
+  try {
+    // Get metadata first to verify search exists
+    const metadata = await getSearchMetadata(searchId);
+    if (!metadata) {
+      res.status(404).json({
+        success: false,
+        error: 'Search not found',
+      });
+      return;
+    }
+
+    // Get results with optional pagination and sorting
+    const { results, pageInfo } = await getSearchResults({
+      searchId,
+      page: parseInt(page as string, 10),
+      pageSize: parseInt(pageSize as string, 10),
+      sortBy: sortBy as any,
+      sortOrder: sortOrder as any,
+    });
+
+    res.json({
+      success: true,
+      searchId,
+      query: metadata.queryText,
+      totalResults: metadata.totalResults,
+      properties: results,
+      pageInfo,
+      createdAt: metadata.createdAt,
+    });
+  } catch (error) {
+    console.error('[Server] Error fetching search results:', error);
     res.status(500).json({
       success: false,
       error: error instanceof Error ? error.message : 'Unknown error',

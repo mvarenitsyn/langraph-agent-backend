@@ -172,15 +172,16 @@ You don't need to manage retries - just call property_search once and the backen
 
               console.log(`[PropertySearch] Search completed with ${totalCount} properties (backend handled retries if needed)`);
 
-              // Extract and store searchId in metadata for downstream tools
+              // Extract and store searchId and totalCount in metadata for downstream tools
               if (searchId) {
-                console.log(`[PropertySearch] ✓ Extracted searchId: ${searchId} - storing in metadata`);
+                console.log(`[PropertySearch] ✓ Extracted searchId: ${searchId}, totalCount: ${totalCount} - storing in metadata`);
                 // Note: This will be returned at the end of the node
                 // We store it in a variable to return after tool loop completes
                 state.metadata = {
                   ...state.metadata,
                   lastSearchId: state.metadata?.searchId,  // Preserve previous searchId
                   searchId: searchId,  // Update to new searchId
+                  totalCount: totalCount,  // Include total count for UI events
                 };
               }
             } catch (parseError) {
