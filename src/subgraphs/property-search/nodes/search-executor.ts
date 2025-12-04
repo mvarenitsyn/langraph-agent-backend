@@ -56,9 +56,8 @@ export interface SearchResult {
   listOfficeName?: string;
   listAgentEmail?: string;
   listAgentDirectPhone?: string;
-  // Full MLS property record (Trestle API format)
-  // Includes ListingKey, ListingId, PropertyType, StandardStatus, etc.
-  rawData?: Record<string, unknown>;
+  // Note: rawData removed from search results for performance
+  // Use property_get_full_details tool to fetch complete property data
 }
 
 // Internal filters - matches hybrid-search.ts HybridSearchFilters
@@ -429,8 +428,9 @@ async function fetchProperties(
       tp.raw_data->>'ListAgentMlsId' as list_agent_mls_id,
       tp.raw_data->>'ListOfficeName' as list_office_name,
       tp.raw_data->>'ListAgentEmail' as list_agent_email,
-      tp.raw_data->>'ListAgentDirectPhone' as list_agent_direct_phone,
-      tp.raw_data as raw_data
+      tp.raw_data->>'ListAgentDirectPhone' as list_agent_direct_phone
+      -- raw_data removed for performance (50KB per property)
+      -- Use property_get_full_details tool to fetch on-demand
     FROM trestle_properties tp
     WHERE tp.listing_key = ANY($1)
   `, [keysToFetch]);
@@ -467,13 +467,7 @@ async function fetchProperties(
         listOfficeName: row.list_office_name || undefined,
         listAgentEmail: row.list_agent_email || undefined,
         listAgentDirectPhone: row.list_agent_direct_phone || undefined,
-        // Full MLS record - contains ListingKey, ListingId, PropertyType, StandardStatus, etc.
-        // IMPORTANT: Inject Latitude/Longitude from separate columns since raw_data JSONB doesn't have them
-        rawData: row.raw_data ? {
-          ...row.raw_data,
-          Latitude: row.latitude ? parseFloat(row.latitude) : undefined,
-          Longitude: row.longitude ? parseFloat(row.longitude) : undefined,
-        } : undefined,
+        // rawData removed for performance - use property_get_full_details tool to fetch on-demand
       };
     });
 }

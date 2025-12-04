@@ -26,6 +26,7 @@ import {
 import { collectionTools } from "./collections.js";
 import { showingTools } from "./showings.js";
 import { commissionTools } from "./commissions.js";
+import { propertyGetFullDetailsTool } from "./property-full-details.js";
 
 /**
  * Initialize and register all tools
@@ -41,6 +42,7 @@ export function initializeTools() {
   globalToolsRegistry.register(propertyFilterSortTool);
   globalToolsRegistry.register(propertyGetResultsTool);
   globalToolsRegistry.register(propertyGetDetailsTool);
+  globalToolsRegistry.register(propertyGetFullDetailsTool);
 
   // Register Perplexity search tool
   globalToolsRegistry.register(perplexitySearchTool);
@@ -99,3 +101,4 @@ export {
 export { collectionTools } from "./collections.js";
 export { showingTools } from "./showings.js";
 export { commissionTools } from "./commissions.js";
+export { propertyGetFullDetailsTool } from "./property-full-details.js";
