@@ -1,25 +1,37 @@
 import { AIMessage, HumanMessage, ToolMessage, SystemMessage } from "@langchain/core/messages";
 import { AgentStateType } from "../types/state.js";
 import { globalToolsRegistry } from "../tools/registry.js";
-import { createToolCallingModel, createResponseModel } from "../models/openai.js";
+import { createResponseModel } from "../models/openai.js";
 import { uiEventPublisher } from "../pubsub/ui-event-publisher.js";
 import { sharedPublisher } from "../pubsub/shared.js";
 import { getPlatformContext, shouldPublishUIEvents } from "../utils/platformContext.js";
 import { buildFormattingInstructions, adaptMarkdown, truncateResponse } from "../utils/formatters.js";
 
 /**
- * Property Search Node - Mini Agent with Tool Loop
+ * Property Search Node - Optimized Direct Tool Execution
  *
- * This node is a specialized mini-agent that uses:
- * 1. property_search - Search the MLS API
+ * PERFORMANCE OPTIMIZATION:
+ * This node directly executes the property_search tool WITHOUT an LLM decision step.
+ * We already know we need to search (router sent us here), so we skip the unnecessary
+ * "should I call the tool?" LLM call that was costing 1-2 seconds.
  *
  * Flow:
- * - Uses LLM with property_search tool bound
- * - Can call the tool multiple times if needed
- * - Generates final response after search completes
+ * 1. DIRECTLY call property_search tool with user query (no LLM decision)
+ * 2. Generate user-friendly response from results
+ *
+ * Previous flow (SLOW):
+ * 1. LLM decides to call tool (1-2s) ❌ REMOVED
+ * 2. Execute tool (12s)
+ * 3. LLM generates response (5-6s)
+ *
+ * New flow (FAST):
+ * 1. Execute tool directly (12s)
+ * 2. LLM generates response (5-6s)
+ *
+ * Savings: 1-2 seconds per search
  */
 export async function propertySearchNode(state: AgentStateType): Promise<Partial<AgentStateType>> {
-  console.log('\n[PropertySearch] Starting property search agent...');
+  console.log('\n[PropertySearch] Starting property search agent (OPTIMIZED - direct tool execution)...');
 
   // Emit progress: Searching MLS
   await sharedPublisher.publishProgressUpdate({
@@ -52,23 +64,86 @@ export async function propertySearchNode(state: AgentStateType): Promise<Partial
       throw new Error('property_search tool not found');
     }
 
-    const tools = [propertySearchTool];
     console.log('[PropertySearch] ✓ Tool registered: property_search');
-    console.log(`[PropertySearch] Binding ${tools.length} tool to LLM: ${tools.map(t => t.name).join(', ')}`);
+    console.log('[PropertySearch] ⚡ OPTIMIZATION: Skipping LLM tool binding - calling tool directly');
 
-    // Create model with tools bound
-    const toolModel = createToolCallingModel();
-    const modelWithTools = toolModel.bindTools(tools);
+    // OPTIMIZATION: Directly execute the property_search tool WITHOUT LLM decision
+    // We already know we need to search (router routed us here), so skip the "should I call tool?" step
+    console.log(`[PropertySearch] Executing property_search with query: "${state.message}"`);
 
-    console.log('[PropertySearch] ✓ Tools bound to model successfully');
+    const startTime = Date.now();
+    const result = await propertySearchTool.invoke(
+      { query: state.message },
+      {
+        metadata: {
+          sessionId: state.metadata?.sessionId,
+          userId: state.metadata?.userId,
+          userContext: state.userContext,
+        },
+      }
+    );
+    const toolExecutionTime = Date.now() - startTime;
+    console.log(`[PropertySearch] ⏱️  Tool execution time: ${toolExecutionTime}ms`);
 
-    // Build rich system prompt with user context
+    const resultStr = typeof result === 'string' ? result : JSON.stringify(result);
+
+    // Store result
+    const toolResults: Record<string, any> = {
+      property_search: resultStr,
+    };
+
+    // Create AI message with tool call (required by OpenAI API)
+    // Even though we called the tool directly, we need to create this for the conversation history
+    const toolCallId = `property_search_${Date.now()}`;
+    const aiMessageWithToolCall = new AIMessage({
+      content: '',
+      tool_calls: [{
+        id: toolCallId,
+        name: 'property_search',
+        args: { query: state.message },
+        type: 'tool_call' as const,
+      }],
+    });
+
+    // Create tool message for conversation history
+    const toolMessage = new ToolMessage({
+      content: resultStr,
+      tool_call_id: toolCallId,
+      name: 'property_search',
+    });
+
+    // Log search results and extract searchId
+    try {
+      const resultObj = typeof result === 'string' ? JSON.parse(result) : result;
+      const totalCount = resultObj?.totalCount || 0;
+      const searchId = resultObj?.searchId;
+
+      console.log(`[PropertySearch] Search completed with ${totalCount} properties (backend handled retries if needed)`);
+
+      // Extract and store searchId and totalCount in metadata for downstream tools
+      if (searchId) {
+        console.log(`[PropertySearch] ✓ Extracted searchId: ${searchId}, totalCount: ${totalCount} - storing in metadata`);
+        state.metadata = {
+          ...state.metadata,
+          lastSearchId: state.metadata?.searchId,  // Preserve previous searchId
+          searchId: searchId,  // Update to new searchId
+          totalCount: totalCount,  // Include total count for UI events
+        };
+      }
+    } catch (parseError) {
+      console.warn('[PropertySearch] Could not parse property_search result:', parseError);
+    }
+
+    console.log('[PropertySearch] ✓ Tool execution completed, generating final response...');
+
+    // Generate final response using a separate model
+    const responseModel = createResponseModel();
+
+    // Build system prompt
     let systemPrompt = '';
-
     if (isAuthenticated) {
       systemPrompt = `You are RealVista, a property search specialist helping ${userName} find properties in South Florida.`;
 
-      // Add user context summary
       const contextParts = [];
       if (userContext.linkedListingsCount && userContext.linkedListingsCount > 0) {
         contextParts.push(`${userContext.linkedListingsCount} listings`);
@@ -83,135 +158,6 @@ export async function propertySearchNode(state: AgentStateType): Promise<Partial
     } else {
       systemPrompt = `You are RealVista, a property search specialist for South Florida real estate.`;
     }
-
-    const instructions = `
-Your job: Use the property_search tool to find properties and answer the user's query.
-
-**Available Tool:**
-- **property_search** - Search MLS listings using natural language queries
-
-**How It Works:**
-The property_search tool uses an intelligent backend mapper that automatically converts natural language queries into precise MLS filters. You simply pass the user's query, and the backend handles all the technical details.
-
-**Examples:**
-- "2 bedroom condos in Miami under 500k"
-- "luxury waterfront homes in Aventura"
-- "3+ bedroom houses in Fort Lauderdale"
-
-**Automatic Zero-Result Retry:**
-The backend automatically handles zero-result searches with a 2-tier retry strategy:
-- **Tier 1**: Remove StandardStatus filter (e.g., "Active" only) to include all statuses
-- **Tier 2**: Keep only core location fields (StreetNumber, StreetName, UnitNumber, City, PostalCode)
-
-You don't need to manage retries - just call property_search once and the backend will handle the rest.
-`;
-
-    // Include conversation history to remember user preferences and context
-    // This enables personalized search recommendations based on previous interactions
-    const previousMessages = state.messages || [];
-    const latestUserMessage = new HumanMessage({ content: state.message });
-
-    let currentMessages = [
-      new SystemMessage({ content: `${systemPrompt}\n${instructions}` }),
-      ...previousMessages, // Include full conversation history from checkpoint
-      latestUserMessage,
-    ];
-
-    // Track where the current turn's tool loop starts (after all previous messages)
-    const toolLoopStartIndex = 1 + previousMessages.length + 1; // SystemMessage + previousMessages + latestUserMessage
-
-    const toolResults: Record<string, any> = {};
-    const toolMessages: ToolMessage[] = [];
-    let loopCount = 0;
-    const maxLoops = 1; // Single call only - backend handles retries
-
-    // Tool execution loop
-    while (loopCount < maxLoops) {
-      console.log(`[PropertySearch] Tool loop iteration ${loopCount + 1}/${maxLoops}`);
-
-      const response = await modelWithTools.invoke(currentMessages);
-
-      // Check if tools were called
-      if (response.tool_calls && response.tool_calls.length > 0) {
-        console.log(`[PropertySearch] LLM requested ${response.tool_calls.length} tool(s): ${response.tool_calls.map(tc => tc.name).join(', ')}`);
-
-        // Add AI message with tool calls to history
-        currentMessages.push(response);
-
-        // Execute each tool call
-        for (const toolCall of response.tool_calls) {
-          const tool = tools.find(t => t.name === toolCall.name);
-          if (!tool) {
-            console.error(`[PropertySearch] Tool ${toolCall.name} not found`);
-            continue;
-          }
-
-          console.log(`[PropertySearch] Executing ${toolCall.name} with args:`, toolCall.args);
-          const result = await tool.invoke(toolCall.args, {
-            metadata: {
-              sessionId: state.metadata?.sessionId,
-              userId: state.metadata?.userId,
-              userContext: state.userContext,
-            },
-          });
-          const resultStr = typeof result === 'string' ? result : JSON.stringify(result);
-
-          // Store result
-          toolResults[toolCall.name] = resultStr;
-
-          // Create tool message
-          const toolMessage = new ToolMessage({
-            content: resultStr,
-            tool_call_id: toolCall.id || `${toolCall.name}_${Date.now()}`,
-            name: toolCall.name,
-          });
-
-          toolMessages.push(toolMessage);
-          currentMessages.push(toolMessage);
-
-          // Log search results and extract searchId (backend handles retries automatically)
-          if (toolCall.name === 'property_search') {
-            try {
-              const resultObj = typeof result === 'string' ? JSON.parse(result) : result;
-              const totalCount = resultObj?.totalCount || 0;
-              const searchId = resultObj?.searchId;
-
-              console.log(`[PropertySearch] Search completed with ${totalCount} properties (backend handled retries if needed)`);
-
-              // Extract and store searchId and totalCount in metadata for downstream tools
-              if (searchId) {
-                console.log(`[PropertySearch] ✓ Extracted searchId: ${searchId}, totalCount: ${totalCount} - storing in metadata`);
-                // Note: This will be returned at the end of the node
-                // We store it in a variable to return after tool loop completes
-                state.metadata = {
-                  ...state.metadata,
-                  lastSearchId: state.metadata?.searchId,  // Preserve previous searchId
-                  searchId: searchId,  // Update to new searchId
-                  totalCount: totalCount,  // Include total count for UI events
-                };
-              }
-            } catch (parseError) {
-              console.warn('[PropertySearch] Could not parse property_search result:', parseError);
-            }
-          }
-        }
-
-        loopCount++;
-      } else {
-        // No more tool calls - exit loop
-        console.log('[PropertySearch] No more tool calls - proceeding to response generation');
-        break;
-      }
-    }
-
-    if (loopCount >= maxLoops) {
-      console.warn('[PropertySearch] Max tool loop iterations reached');
-    }
-
-    console.log('[PropertySearch] ✓ Tool execution completed, generating final response...');
-
-    // Generate final response using a separate model
-    const responseModel = createResponseModel();
 
     // Add platform-specific formatting instructions
     const platformFormattingInstructions = buildFormattingInstructions(platformContext);
@@ -234,18 +180,22 @@ ${platformFormattingInstructions}
 Generate a focused response based on the tool results below.
 `;
 
-    // Clean message history for response generation
-    // Include user query + COMPLETE tool loop conversation (AIMessages with tool_calls + ToolMessages)
-    // Extract tool loop conversation from currentMessages (after the initial setup)
-    const toolLoopConversation = currentMessages.slice(toolLoopStartIndex); // Skip initial messages
+    // Create response generation messages
+    // Include user query, AI message with tool call, and tool result
+    const latestUserMessage = new HumanMessage({ content: state.message });
 
     const responseMessages = [
       new SystemMessage({ content: `${systemPrompt}\n${responseInstructions}` }),
-      latestUserMessage,        // User's original query
-      ...toolLoopConversation,  // Complete tool loop: AIMessages + ToolMessages
+      latestUserMessage,
+      aiMessageWithToolCall,  // AI message with tool_calls (required by OpenAI)
+      toolMessage,  // Tool result
     ];
 
+    const responseStart = Date.now();
     const finalResponseMsg = await responseModel.invoke(responseMessages);
+    const responseGenerationTime = Date.now() - responseStart;
+    console.log(`[PropertySearch] ⏱️  Response generation time: ${responseGenerationTime}ms`);
+
     let finalResponse = finalResponseMsg.content as string;
 
     console.log('[PropertySearch] ✓ Response generated');
@@ -285,9 +235,12 @@ Generate a focused response based on the tool results below.
       console.log('[PropertySearch] Skipping UI render event for non-web platform');
     }
 
+    const totalNodeTime = Date.now() - startTime;
+    console.log(`[PropertySearch] ⏱️  Total node time: ${totalNodeTime}ms (tool: ${toolExecutionTime}ms, response: ${responseGenerationTime}ms)`);
+
     return {
       finalResponse,
-      messages: [...toolMessages, new AIMessage({ content: finalResponse })],
+      messages: [aiMessageWithToolCall, toolMessage, new AIMessage({ content: finalResponse })],
       toolResults,
       metadata: state.metadata,  // Include updated metadata with searchId
       platformContext,
