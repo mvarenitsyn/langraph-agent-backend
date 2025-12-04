@@ -1,7 +1,13 @@
 import { StateGraph, START, END } from "@langchain/langgraph";
 import { AgentState } from "../types/state.js";
 import { routerNode } from "../nodes/router.js";
-import { propertySearchNode } from "../nodes/property-search.js";
+// Decomposed property search nodes (replaces property-search.js)
+import { queryMapperNode } from "../nodes/query-mapper.js";
+import { searchExecutorNode } from "../nodes/search-executor.js";
+import { deduplicatorNode } from "../nodes/deduplicator.js";
+import { resultSaverNode } from "../nodes/result-saver.js";
+import { searchResponseGeneratorNode } from "../nodes/search-response-generator.js";
+// Other specialized nodes
 import { propertyFilterSortNode } from "../nodes/property-filter-sort.js";
 import { propertyOperationsNode } from "../nodes/property-operations.js";
 import { perplexitySearchNode } from "../nodes/perplexity-search.js";
@@ -16,11 +22,11 @@ import { initializeTools } from "../tools/index.js";
 initializeTools();
 
 /**
- * ULTRA-SIMPLIFIED LangGraph Agent - Each Node Generates Own Response
+ * OPTIMIZED LangGraph Agent - Decomposed Property Search Pipeline
  *
  * Graph structure:
  * START → router → [conditional:
- *   - If property query → property_search → END
+ *   - If property query → query_mapper → search_executor → deduplicator → result_saver → search_response_generator → END
  *   - If filter/sort query → property_filter_sort → END (LEGACY - being deprecated)
  *   - If property operations → property_operations → END (includes CMA)
  *   - If research query → perplexity_search → END
@@ -30,17 +36,21 @@ initializeTools();
  *   - Otherwise → END (router generated response)
  * ]
  *
- * Key simplifications:
- * - Router uses LLM to decide: generate response OR call specialized tool nodes
- * - property_search: MLS property search with tool loop
+ * Key optimizations:
+ * - Property search decomposed into 5 sequential nodes (eliminates subgraph overhead)
+ *   1. query_mapper: Parse natural language query with GPT-5.1
+ *   2. search_executor: Execute Elasticsearch + PostgreSQL hybrid search
+ *   3. deduplicator: Remove duplicate listings by address
+ *   4. result_saver: Persist results to database with searchId
+ *   5. search_response_generator: Generate user-friendly response and publish UI events
+ * - Router uses LLM to decide: generate response OR route to specialized pipelines
  * - property_filter_sort: Filter/sort existing search results with tool loop (LEGACY)
  * - property_operations: Multi-tool agent (filter, get_results, get_details, CMA) with flexible execution
  * - perplexity_search: Web research with tool loop
  * - collections: Property collections management (create, list, add, share)
  * - showings: Property showing scheduling and management
  * - commissions: Commission information requests and tracking
- * - Each node generates its own final response
- * - NO separate generate_response node
+ * - Each pipeline generates its own final response
  * - NO LOOPS at graph level, only within specialized nodes
  */
 
@@ -58,8 +68,8 @@ function routeAfterRouter(state: typeof AgentState.State) {
   const shouldUseCommissions = state.metadata?.shouldUseCommissions || false;
 
   if (shouldSearchProperties) {
-    console.log(`[Graph] Routing to property_search`);
-    return "property_search";
+    console.log(`[Graph] Routing to query_mapper (decomposed property search pipeline)`);
+    return "query_mapper";
   }
 
   if (shouldUsePropertyOperations) {
@@ -102,9 +112,17 @@ export async function createAgentGraph() {
 
   // Create the state graph - NO TOOL LOOP AT GRAPH LEVEL
   const workflow = new StateGraph(AgentState)
-    // Add 8 nodes: router, property_search, property_filter_sort, property_operations, perplexity_search, collections, showings, commissions
+    // Router node
     .addNode("router", routerNode)
-    .addNode("property_search", propertySearchNode)
+
+    // Property search pipeline (5 sequential nodes - decomposed from subgraph)
+    .addNode("query_mapper", queryMapperNode)
+    .addNode("search_executor", searchExecutorNode)
+    .addNode("deduplicator", deduplicatorNode)
+    .addNode("result_saver", resultSaverNode)
+    .addNode("search_response_generator", searchResponseGeneratorNode)
+
+    // Other specialized nodes
     .addNode("property_filter_sort", propertyFilterSortNode)
     .addNode("property_operations", propertyOperationsNode)
     .addNode("perplexity_search", perplexitySearchNode)
@@ -115,15 +133,21 @@ export async function createAgentGraph() {
     // Add edges
     .addEdge(START, "router")
 
-    // Conditional edge from router: all specialized nodes or END
+    // Conditional edge from router: all specialized pipelines or END
     .addConditionalEdges(
       "router",
       routeAfterRouter,
-      ["property_search", "property_filter_sort", "property_operations", "perplexity_search", "collections", "showings", "commissions", END]
+      ["query_mapper", "property_filter_sort", "property_operations", "perplexity_search", "collections", "showings", "commissions", END]
     )
 
-    // After specialized nodes, go to END (they generate their own responses)
-    .addEdge("property_search", END)
+    // Property search pipeline: sequential chain
+    .addEdge("query_mapper", "search_executor")
+    .addEdge("search_executor", "deduplicator")
+    .addEdge("deduplicator", "result_saver")
+    .addEdge("result_saver", "search_response_generator")
+    .addEdge("search_response_generator", END)
+
+    // After other specialized nodes, go to END (they generate their own responses)
     .addEdge("property_filter_sort", END)
     .addEdge("property_operations", END)
     .addEdge("perplexity_search", END)
@@ -139,7 +163,7 @@ export async function createAgentGraph() {
     checkpointer,
   });
 
-  console.log(`[Graph] ✓ Ultra-simplified agent graph compiled with 8 nodes (router + 7 specialized agents)`);
+  console.log(`[Graph] ✓ Optimized agent graph compiled with 12 nodes (router + 5-node property search pipeline + 6 specialized agents)`);
 
   return graph;
 }
