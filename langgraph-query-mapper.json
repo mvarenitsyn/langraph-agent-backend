@@ -1,0 +1,6 @@
+{
+  "graphs": {
+    "query_mapper_test": "./query-mapper-studio.ts:queryMapperGraph"
+  },
+  "env": ".env"
+}

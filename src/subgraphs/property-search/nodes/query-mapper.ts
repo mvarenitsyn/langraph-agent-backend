@@ -108,8 +108,10 @@ export async function queryMapperNode(state: AgentStateType): Promise<Partial<Ag
   }
 
   try {
+    // PERFORMANCE: Using GPT-5.1 for faster query parsing with better accuracy
+    // GPT-5.1 is optimized for agentic tasks and structured outputs
     const model = new ChatOpenAI({
-      model: "gpt-4o-mini",
+      model: "gpt-5.1",
       temperature: 0,
       streaming: false,  // Prevent structured output from being streamed to frontend
     }).withStructuredOutput(MappedQuerySchema);
@@ -293,7 +295,10 @@ Note: "2-bedroom" = EXACTLY 2 bedrooms → minBeds: 2, maxBeds: 2. NOT minBeds: 
     ];
 
     console.log('[QueryMapper] Calling LLM to parse query...');
+    const llmStart = Date.now();
     const rawMappedQuery = await model.invoke(messages);
+    const llmElapsed = Date.now() - llmStart;
+    console.log(`[QueryMapper] ⏱️  LLM Response Time: ${llmElapsed}ms`);
 
     // Normalize output: convert 0 → null for numbers, false → null for booleans
     // IMPORTANT: Default status to "Active" if not specified by user

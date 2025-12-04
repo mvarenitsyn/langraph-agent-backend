@@ -1,11 +1,11 @@
 import { AIMessage, HumanMessage, ToolMessage, SystemMessage } from "@langchain/core/messages";
 import { AgentStateType } from "../types/state.js";
-import { globalToolsRegistry } from "../tools/registry.js";
 import { createResponseModel } from "../models/openai.js";
 import { uiEventPublisher } from "../pubsub/ui-event-publisher.js";
 import { sharedPublisher } from "../pubsub/shared.js";
 import { getPlatformContext, shouldPublishUIEvents } from "../utils/platformContext.js";
 import { buildFormattingInstructions, adaptMarkdown, truncateResponse } from "../utils/formatters.js";
+import { invokePropertySearch } from "../subgraphs/property-search/invoke.js";
 
 /**
  * Property Search Node - Optimized Direct Tool Execution
@@ -57,33 +57,23 @@ export async function propertySearchNode(state: AgentStateType): Promise<Partial
   }
 
   try {
-    // Get property search tool
-    const propertySearchTool = globalToolsRegistry.getTool('property_search');
+    console.log('[PropertySearch] ⚡ ULTRA-OPTIMIZATION: Calling subgraph directly, bypassing tool wrapper');
+    console.log(`[PropertySearch] Executing property search subgraph with query: "${state.message}"`);
 
-    if (!propertySearchTool) {
-      throw new Error('property_search tool not found');
-    }
-
-    console.log('[PropertySearch] ✓ Tool registered: property_search');
-    console.log('[PropertySearch] ⚡ OPTIMIZATION: Skipping LLM tool binding - calling tool directly');
-
-    // OPTIMIZATION: Directly execute the property_search tool WITHOUT LLM decision
-    // We already know we need to search (router routed us here), so skip the "should I call tool?" step
-    console.log(`[PropertySearch] Executing property_search with query: "${state.message}"`);
-
+    // ULTRA-OPTIMIZATION: Call the property search subgraph DIRECTLY
+    // Bypass the tool wrapper entirely - go straight to the subgraph
     const startTime = Date.now();
-    const result = await propertySearchTool.invoke(
-      { query: state.message },
+    const result = await invokePropertySearch(
+      state.message,
       {
-        metadata: {
-          sessionId: state.metadata?.sessionId,
-          userId: state.metadata?.userId,
-          userContext: state.userContext,
-        },
+        threadId: state.metadata?.sessionId || 'unknown',
+        userId: state.metadata?.userId,
+        sessionId: state.metadata?.sessionId,
+        correlationId: state.metadata?.correlationId,
       }
     );
     const toolExecutionTime = Date.now() - startTime;
-    console.log(`[PropertySearch] ⏱️  Tool execution time: ${toolExecutionTime}ms`);
+    console.log(`[PropertySearch] ⏱️  Subgraph execution time: ${toolExecutionTime}ms`);
 
     const resultStr = typeof result === 'string' ? result : JSON.stringify(result);
 
