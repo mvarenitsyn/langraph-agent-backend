@@ -132,6 +132,37 @@ export async function queryMapperNode(state: AgentStateType): Promise<Partial<Ag
    - counties: Extract county names if mentioned, otherwise null
    - **IMPORTANT**: City names go ONLY in cities array, NOT in query field
 
+**🏘️ CRITICAL: NEIGHBORHOOD → ZIP CODE CONVERSION:**
+
+When a user mentions a neighborhood, area, or district name (NOT a city or building name), you MUST:
+1. Recognize it as a neighborhood/area
+2. Use your knowledge to find the corresponding ZIP codes for that area
+3. Put the ZIP codes in postalCodes array
+4. Put the parent city in cities array
+5. Leave location.query EMPTY (do not put the neighborhood name there)
+
+Common Miami-Dade neighborhoods and their ZIP codes (use your knowledge for others):
+- Brickell → postalCodes: ["33129", "33130", "33131"], cities: ["Miami"]
+- Downtown Miami → postalCodes: ["33128", "33130", "33131", "33132"], cities: ["Miami"]
+- South Beach → postalCodes: ["33139"], cities: ["Miami Beach"]
+- Wynwood → postalCodes: ["33127", "33137"], cities: ["Miami"]
+- Coconut Grove → postalCodes: ["33133"], cities: ["Miami"]
+- Coral Gables → This is a CITY, not a neighborhood → cities: ["Coral Gables"], postalCodes: null
+- Little Havana → postalCodes: ["33135", "33136"], cities: ["Miami"]
+- Edgewater → postalCodes: ["33137", "33138"], cities: ["Miami"]
+- Midtown → postalCodes: ["33137"], cities: ["Miami"]
+- Design District → postalCodes: ["33137"], cities: ["Miami"]
+- Key Biscayne → This is a CITY → cities: ["Key Biscayne"], postalCodes: null
+- Aventura → This is a CITY → cities: ["Aventura"], postalCodes: null
+- Doral → This is a CITY → cities: ["Doral"], postalCodes: null
+- Sunny Isles Beach → This is a CITY → cities: ["Sunny Isles Beach"], postalCodes: null
+- Miami Beach → This is a CITY → cities: ["Miami Beach"], postalCodes: null
+
+**IMPORTANT DISTINCTIONS:**
+- Neighborhoods (convert to ZIP): Brickell, South Beach, Wynwood, Downtown, Edgewater, Midtown, Little Havana
+- Cities (use cities array ONLY, no ZIP conversion): Miami Beach, Aventura, Sunny Isles Beach, Key Biscayne, Coral Gables, Doral
+- Buildings (use location.query): Mystic Pointe, Porsche Tower, Jade Signature, Portofino Tower
+
 2. **features** segment:
    - query: Property features for text search in ES features index:
      * Amenities: "pool", "ocean view", "waterfront", "boat dock", "balcony"
@@ -238,14 +269,14 @@ Result:
 - other: ""
 Note: "2br" = EXACTLY 2 bedrooms → minBeds: 2, maxBeds: 2
 
-Query: "condo South Beach with pool"
+Query: "condos in Brickell under 500k"
 Result:
-- location: { query: "South Beach", cities: ["Miami Beach"], postalCodes: null, counties: null }
+- location: { query: "", cities: ["Miami"], postalCodes: ["33129", "33130", "33131"], counties: null }
 - features: { query: "" }
-- strict: { propertyType: ["Residential"], propertySubType: "Condominium", status: "Active", minBeds: null, maxBeds: null, minBaths: null, maxBaths: null, minPrice: null, maxPrice: null, minSqft: null, maxSqft: null, minYearBuilt: null, maxYearBuilt: null, poolYn: true, waterfrontYn: null, garageYn: null, newConstructionYn: null }
+- strict: { propertyType: ["Residential"], propertySubType: "Condominium", status: "Active", minBeds: null, maxBeds: null, minBaths: null, maxBaths: null, minPrice: null, maxPrice: 500000, minSqft: null, maxSqft: null, minYearBuilt: null, maxYearBuilt: null, poolYn: null, waterfrontYn: null, garageYn: null, newConstructionYn: null }
 - visual_features: ""
 - other: ""
-Note: "South Beach" is a neighborhood (not a city) → location.query. The city is "Miami Beach" → cities array
+Note: "Brickell" is a NEIGHBORHOOD → converted to ZIP codes. Parent city "Miami" → cities array. location.query is EMPTY.
 
 Query: "2-bedroom condo in Sunny Isles Beach with ocean view"
 Result:

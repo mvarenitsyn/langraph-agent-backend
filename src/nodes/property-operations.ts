@@ -607,7 +607,8 @@ async function publishUIEventsForTools(toolResults: Record<string, any>, state: 
       // property_get_details → property_details
       else if (toolName === 'property_get_details' && result.property && result.searchId) {
         const property = result.property;
-        const listingKey = property.ListingKey;
+        // Support both lowercase (SearchResult format) and uppercase (MLS raw format)
+        const listingKey = property.listingKey || property.ListingKey || property.rawData?.ListingKey;
 
         console.log(`[PropertyOperations] Publishing property_details event for ${listingKey}`);
 
