@@ -14,13 +14,16 @@ import {
   createErrorEvent
 } from './utils/streaming.js';
 import { getSearchResults, getSearchMetadata } from './subgraphs/property-search/db/search-results.js';
+import { resolvePlatformContext } from './utils/platformContext.js';
+import { PlatformType } from './types/platform.js';
 
 /**
  * Express Server with Streaming Support
  */
 
 const app = express();
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
 // Health check endpoint
 app.get('/health', (req: Request, res: Response) => {
@@ -35,7 +38,7 @@ app.get('/health', (req: Request, res: Response) => {
  */
 app.post('/chat', async (req: Request, res: Response) => {
   // Support both 'message' (new) and 'query' (backward compatibility)
-  const { message, query, threadId = 'default-thread' } = req.body;
+  const { message, query, threadId = 'default-thread', platform = 'web' } = req.body;
   const userMessage = message || query;
 
   if (!userMessage) {
@@ -58,6 +61,10 @@ app.post('/chat', async (req: Request, res: Response) => {
     // Configure thread for checkpointing
     const configurable = { configurable: { thread_id: threadId } };
 
+    // Resolve platform context from request
+    const platformContext = resolvePlatformContext({ platform: platform as PlatformType });
+    console.log(`[Server] Platform: ${platformContext.platform}`);
+
     // Stream the graph execution
     // Note: Only pass fields that need to be set for this turn
     // LangGraph will automatically load messages from checkpoint
@@ -70,7 +77,9 @@ app.post('/chat', async (req: Request, res: Response) => {
           sessionId: threadId,
           userId: req.body.userId, // Optional: can be passed from client
           correlationId: randomUUID(),
+          platform: platformContext.platform,
         },
+        platformContext,
       },
       {
         ...configurable,
@@ -136,7 +145,7 @@ app.post('/chat', async (req: Request, res: Response) => {
  */
 app.post('/chat/simple', async (req: Request, res: Response) => {
   // Support both 'message' (new) and 'query' (backward compatibility)
-  const { message, query, threadId = 'default-thread', metadata: clientMetadata } = req.body;
+  const { message, query, threadId = 'default-thread', metadata: clientMetadata, platform = 'web' } = req.body;
   const userMessage = message || query;
 
   if (!userMessage) {
@@ -147,6 +156,10 @@ app.post('/chat/simple', async (req: Request, res: Response) => {
   try {
     const graph = await createAgentGraph();
     const configurable = { configurable: { thread_id: threadId } };
+
+    // Resolve platform context from request
+    const platformContext = resolvePlatformContext({ platform: platform as PlatformType });
+    console.log(`[Server] Platform: ${platformContext.platform}`);
 
     // Note: Only pass fields that need to be set for this turn
     // LangGraph will automatically load messages from checkpoint
@@ -159,9 +172,11 @@ app.post('/chat/simple', async (req: Request, res: Response) => {
           sessionId: threadId,
           userId: req.body.userId, // Optional: can be passed from client
           correlationId: randomUUID(),
+          platform: platformContext.platform,
           // Merge client-provided metadata (e.g., searchId for testing)
           ...(clientMetadata || {}),
         },
+        platformContext,
       },
       configurable
     );

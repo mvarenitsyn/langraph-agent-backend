@@ -10,10 +10,17 @@
 import { DynamicStructuredTool } from "@langchain/core/tools";
 import { z } from "zod";
 import { getSearchResults } from "../subgraphs/property-search/db/search-results.js";
-import { analyzeFields, categorizeFields, getFieldDescription } from "./sandbox/field-analyzer.js";
+import {
+  analyzeFields,
+  categorizeFields,
+  getFieldDescription,
+} from "./sandbox/field-analyzer.js";
 import { executeAnalysis, executeFilter } from "./sandbox/executor.js";
 import { sanitizeFieldFilter } from "./sandbox/validators.js";
-import { createLimitedResponse, TOOL_RESPONSE_LIMITS } from "./response-limiter.js";
+import {
+  createLimitedResponse,
+  TOOL_RESPONSE_LIMITS,
+} from "./response-limiter.js";
 
 // Maximum properties to load for sandbox operations
 const MAX_PROPERTIES_FOR_SANDBOX = 500;
@@ -47,37 +54,51 @@ The filter parameter accepts simple patterns like:
 
   schema: z.object({
     searchId: z.string().describe("UUID of the search result to analyze"),
-    filter: z.string().optional().describe("Optional filter pattern for field names (e.g., 'pool', 'price|cost')"),
-    categorize: z.boolean().optional().default(false).describe("Group fields by category (location, pricing, features, etc.)"),
+    filter: z
+      .string()
+      .optional()
+      .describe(
+        "Optional filter pattern for field names (e.g., 'pool', 'price|cost')",
+      ),
+    categorize: z
+      .boolean()
+      .optional()
+      .default(false)
+      .describe("Group fields by category (location, pricing, features, etc.)"),
   }),
 
   func: async ({ searchId, filter, categorize }) => {
-    console.log(`[PropertySandbox] Discovering fields for searchId: ${searchId}, filter: ${filter || 'none'}`);
+    console.log(
+      `[PropertySandbox] Discovering fields for searchId: ${searchId}, filter: ${filter || "none"}`,
+    );
     const startTime = Date.now();
 
     try {
       // Load properties from database
       const { results, pageInfo } = await getSearchResults({
         searchId,
-        pageSize: MAX_PROPERTIES_FOR_SANDBOX
+        pageSize: MAX_PROPERTIES_FOR_SANDBOX,
       });
 
       if (results.length === 0) {
         return JSON.stringify({
           success: false,
-          error: 'No properties found for this searchId',
-          searchId
+          error: "No properties found for this searchId",
+          searchId,
         });
       }
 
       // Analyze fields
       const filterPattern = sanitizeFieldFilter(filter);
-      const fields = analyzeFields(results as unknown as Record<string, unknown>[], filterPattern);
+      const fields = analyzeFields(
+        results as unknown as Record<string, unknown>[],
+        filterPattern,
+      );
 
       // Add descriptions for known fields
-      const fieldsWithDescriptions = fields.map(f => ({
+      const fieldsWithDescriptions = fields.map((f) => ({
         ...f,
-        description: getFieldDescription(f.name)
+        description: getFieldDescription(f.name),
       }));
 
       // Build response
@@ -91,8 +112,8 @@ The filter parameter accepts simple patterns like:
           propertiesAnalyzed: results.length,
           fieldsFound: fields.length,
           fieldsByCategory: categorized,
-          note: filter ? `Filtered by: ${filter}` : 'All fields shown',
-          executionTimeMs: Date.now() - startTime
+          note: filter ? `Filtered by: ${filter}` : "All fields shown",
+          executionTimeMs: Date.now() - startTime,
         };
       } else {
         response = {
@@ -101,23 +122,26 @@ The filter parameter accepts simple patterns like:
           propertiesAnalyzed: results.length,
           fieldsFound: fields.length,
           fields: fieldsWithDescriptions.slice(0, 100), // Limit to 100 fields for LLM
-          note: filter ? `Filtered by: ${filter}` : 'Showing top 100 fields by presence rate',
-          executionTimeMs: Date.now() - startTime
+          note: filter
+            ? `Filtered by: ${filter}`
+            : "Showing top 100 fields by presence rate",
+          executionTimeMs: Date.now() - startTime,
         };
       }
 
-      console.log(`[PropertySandbox] Found ${fields.length} fields in ${Date.now() - startTime}ms`);
+      console.log(
+        `[PropertySandbox] Found ${fields.length} fields in ${Date.now() - startTime}ms`,
+      );
       return JSON.stringify(response);
-
     } catch (error) {
-      console.error('[PropertySandbox] Field discovery error:', error);
+      console.error("[PropertySandbox] Field discovery error:", error);
       return JSON.stringify({
         success: false,
-        error: error instanceof Error ? error.message : 'Unknown error',
-        searchId
+        error: error instanceof Error ? error.message : "Unknown error",
+        searchId,
       });
     }
-  }
+  },
 });
 
 /**
@@ -189,28 +213,35 @@ NOTE: Use property_discover_fields first to see what fields are available!`,
   }),
 
   func: async ({ searchId, code }) => {
-    console.log(`[PropertySandbox] Analyzing with code for searchId: ${searchId}`);
+    console.log(
+      `[PropertySandbox] Analyzing with code for searchId: ${searchId}`,
+    );
     const startTime = Date.now();
 
     try {
       // Load properties
       const { results, pageInfo } = await getSearchResults({
         searchId,
-        pageSize: MAX_PROPERTIES_FOR_SANDBOX
+        pageSize: MAX_PROPERTIES_FOR_SANDBOX,
       });
 
       if (results.length === 0) {
         return JSON.stringify({
           success: false,
-          error: 'No properties found for this searchId',
-          searchId
+          error: "No properties found for this searchId",
+          searchId,
         });
       }
 
-      console.log(`[PropertySandbox] Loaded ${results.length} properties, executing analysis...`);
+      console.log(
+        `[PropertySandbox] Loaded ${results.length} properties, executing analysis...`,
+      );
 
       // Execute in sandbox
-      const execResult = await executeAnalysis(code, results as unknown as Record<string, unknown>[]);
+      const execResult = await executeAnalysis(
+        code,
+        results as unknown as Record<string, unknown>[],
+      );
 
       if (!execResult.success) {
         return JSON.stringify({
@@ -218,30 +249,31 @@ NOTE: Use property_discover_fields first to see what fields are available!`,
           error: execResult.error,
           searchId,
           propertiesAnalyzed: results.length,
-          executionTimeMs: execResult.executionTimeMs
+          executionTimeMs: execResult.executionTimeMs,
         });
       }
 
-      console.log(`[PropertySandbox] Analysis completed in ${execResult.executionTimeMs}ms`);
+      console.log(
+        `[PropertySandbox] Analysis completed in ${execResult.executionTimeMs}ms`,
+      );
 
       return JSON.stringify({
         success: true,
         result: execResult.result,
         propertiesAnalyzed: results.length,
         totalProperties: pageInfo.totalItems,
-        executionTimeMs: execResult.executionTimeMs
+        executionTimeMs: execResult.executionTimeMs,
       });
-
     } catch (error) {
-      console.error('[PropertySandbox] Analysis error:', error);
+      console.error("[PropertySandbox] Analysis error:", error);
       return JSON.stringify({
         success: false,
-        error: error instanceof Error ? error.message : 'Unknown error',
+        error: error instanceof Error ? error.message : "Unknown error",
         searchId,
-        executionTimeMs: Date.now() - startTime
+        executionTimeMs: Date.now() - startTime,
       });
     }
-  }
+  },
 });
 
 /**
@@ -299,13 +331,24 @@ NOTE: Use property_discover_fields first to see what fields are available!`,
 
   schema: z.object({
     searchId: z.string().describe("UUID of the search result to query"),
-    filterCode: z.string().describe("JavaScript filter expression: p => <boolean condition>"),
-    sortCode: z.string().optional().describe("Optional JavaScript sort expression: (a, b) => <comparison>"),
-    limit: z.number().optional().default(20).describe("Maximum properties to return (default: 20, max: 50)"),
+    filterCode: z
+      .string()
+      .describe("JavaScript filter expression: p => <boolean condition>"),
+    sortCode: z
+      .string()
+      .optional()
+      .describe("Optional JavaScript sort expression: (a, b) => <comparison>"),
+    limit: z
+      .number()
+      .optional()
+      .default(20)
+      .describe("Maximum properties to return (default: 20, max: 50)"),
   }),
 
   func: async ({ searchId, filterCode, sortCode, limit }) => {
-    console.log(`[PropertySandbox] Querying with filter for searchId: ${searchId}`);
+    console.log(
+      `[PropertySandbox] Querying with filter for searchId: ${searchId}`,
+    );
     const startTime = Date.now();
 
     // Enforce limit
@@ -315,25 +358,27 @@ NOTE: Use property_discover_fields first to see what fields are available!`,
       // Load properties
       const { results, pageInfo } = await getSearchResults({
         searchId,
-        pageSize: MAX_PROPERTIES_FOR_SANDBOX
+        pageSize: MAX_PROPERTIES_FOR_SANDBOX,
       });
 
       if (results.length === 0) {
         return JSON.stringify({
           success: false,
-          error: 'No properties found for this searchId',
-          searchId
+          error: "No properties found for this searchId",
+          searchId,
         });
       }
 
-      console.log(`[PropertySandbox] Loaded ${results.length} properties, executing query...`);
+      console.log(
+        `[PropertySandbox] Loaded ${results.length} properties, executing query...`,
+      );
 
       // Execute filter in sandbox
       const execResult = await executeFilter(
         filterCode,
         results as unknown as Record<string, unknown>[],
         sortCode,
-        effectiveLimit
+        effectiveLimit,
       );
 
       if (!execResult.success) {
@@ -342,12 +387,14 @@ NOTE: Use property_discover_fields first to see what fields are available!`,
           error: execResult.error,
           searchId,
           propertiesSearched: results.length,
-          executionTimeMs: execResult.executionTimeMs
+          executionTimeMs: execResult.executionTimeMs,
         });
       }
 
       const matchingProperties = execResult.result || [];
-      console.log(`[PropertySandbox] Query found ${matchingProperties.length} matching properties in ${execResult.executionTimeMs}ms`);
+      console.log(
+        `[PropertySandbox] Query found ${matchingProperties.length} matching properties in ${execResult.executionTimeMs}ms`,
+      );
 
       // Use response limiter for output
       const limitedResponse = createLimitedResponse(
@@ -356,8 +403,8 @@ NOTE: Use property_discover_fields first to see what fields are available!`,
         execResult.executionTimeMs,
         {
           ...TOOL_RESPONSE_LIMITS,
-          maxProperties: effectiveLimit
-        }
+          maxProperties: effectiveLimit,
+        },
       );
 
       return JSON.stringify({
@@ -365,28 +412,27 @@ NOTE: Use property_discover_fields first to see what fields are available!`,
         query: {
           filterCode,
           sortCode: sortCode || null,
-          limit: effectiveLimit
+          limit: effectiveLimit,
         },
         propertiesSearched: results.length,
         totalInSearch: pageInfo.totalItems,
-        matchCount: matchingProperties.length
+        matchCount: matchingProperties.length,
       });
-
     } catch (error) {
-      console.error('[PropertySandbox] Query error:', error);
+      console.error("[PropertySandbox] Query error:", error);
       return JSON.stringify({
         success: false,
-        error: error instanceof Error ? error.message : 'Unknown error',
+        error: error instanceof Error ? error.message : "Unknown error",
         searchId,
-        executionTimeMs: Date.now() - startTime
+        executionTimeMs: Date.now() - startTime,
       });
     }
-  }
+  },
 });
 
 // Export all tools
 export const propertySandboxTools = [
   propertyDiscoverFieldsTool,
   propertyAnalyzeTool,
-  propertyQueryTool
+  propertyQueryTool,
 ];

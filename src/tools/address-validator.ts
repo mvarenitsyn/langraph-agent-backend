@@ -38,9 +38,12 @@ interface AddressValidationResponse {
 /**
  * Build human-readable summary from validation result
  */
-function buildValidationSummary(response: AddressValidationResponse, originalAddress: string): string {
+function buildValidationSummary(
+  response: AddressValidationResponse,
+  originalAddress: string,
+): string {
   if (!response.success) {
-    return `Address validation failed: ${response.error || 'Unknown error'}. The service may be unavailable.`;
+    return `Address validation failed: ${response.error || "Unknown error"}. The service may be unavailable.`;
   }
 
   if (!response.isValid) {
@@ -59,24 +62,30 @@ function buildValidationSummary(response: AddressValidationResponse, originalAdd
       parts.push(`\nNote: Some address components were inferred.`);
     }
 
-    parts.push(`\nSuggestion: Please verify the address or try a more specific format.`);
+    parts.push(
+      `\nSuggestion: Please verify the address or try a more specific format.`,
+    );
 
-    return parts.join('');
+    return parts.join("");
   }
 
   // Valid address
   const parts: string[] = [];
-  parts.push(`✓ Valid address confirmed: "${response.formattedAddress || originalAddress}"`);
+  parts.push(
+    `✓ Valid address confirmed: "${response.formattedAddress || originalAddress}"`,
+  );
 
   if (response.geocode) {
-    parts.push(`\nLocation: ${response.geocode.latitude.toFixed(6)}, ${response.geocode.longitude.toFixed(6)}`);
+    parts.push(
+      `\nLocation: ${response.geocode.latitude.toFixed(6)}, ${response.geocode.longitude.toFixed(6)}`,
+    );
   }
 
   if (response.metadata?.confidence) {
     const confidenceLevel = response.metadata.confidence;
-    if (confidenceLevel === 'ROOFTOP' || confidenceLevel === 'PREMISE') {
+    if (confidenceLevel === "ROOFTOP" || confidenceLevel === "PREMISE") {
       parts.push(`\nConfidence: High (precise location)`);
-    } else if (confidenceLevel === 'RANGE_INTERPOLATED') {
+    } else if (confidenceLevel === "RANGE_INTERPOLATED") {
       parts.push(`\nConfidence: Medium (approximate location)`);
     } else {
       parts.push(`\nConfidence: ${confidenceLevel}`);
@@ -85,23 +94,26 @@ function buildValidationSummary(response: AddressValidationResponse, originalAdd
 
   if (response.addressComponents) {
     const components = response.addressComponents;
-    const addressLine = [
-      components.streetNumber,
-      components.route
-    ].filter(Boolean).join(' ');
+    const addressLine = [components.streetNumber, components.route]
+      .filter(Boolean)
+      .join(" ");
 
     const cityStateZip = [
       components.locality,
       components.administrativeArea,
-      components.postalCode
-    ].filter(Boolean).join(', ');
+      components.postalCode,
+    ]
+      .filter(Boolean)
+      .join(", ");
 
     if (addressLine || cityStateZip) {
-      parts.push(`\nComponents: ${addressLine || ''} ${cityStateZip || ''}`.trim());
+      parts.push(
+        `\nComponents: ${addressLine || ""} ${cityStateZip || ""}`.trim(),
+      );
     }
   }
 
-  return parts.join('');
+  return parts.join("");
 }
 
 /**
@@ -130,7 +142,11 @@ Examples:
 
 The tool returns validation status, formatted address, and geocode coordinates.`,
   schema: z.object({
-    address: z.string().describe("Full address string to validate (e.g., '1000 W Island Blvd Apt 2309, Aventura, FL 33160')"),
+    address: z
+      .string()
+      .describe(
+        "Full address string to validate (e.g., '1000 W Island Blvd Apt 2309, Aventura, FL 33160')",
+      ),
   }),
   func: async ({ address }, config) => {
     console.log(`[AddressValidatorTool] Validating: "${address}"`);
@@ -141,72 +157,90 @@ The tool returns validation status, formatted address, and geocode coordinates.`
         rejectUnauthorized: false,
       });
 
-      console.log('[AddressValidatorTool] Making API request to backend...');
+      console.log("[AddressValidatorTool] Making API request to backend...");
 
       // Make API request to backend
-      const response = await fetch('https://localhost:3001/api/validate-address', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
+      const response = await fetch(
+        "https://localhost:3001/api/validate-address",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            address,
+          }),
+          // @ts-ignore - Node.js fetch supports agent option
+          agent: httpsAgent,
         },
-        body: JSON.stringify({
-          address,
-        }),
-        // @ts-ignore - Node.js fetch supports agent option
-        agent: httpsAgent,
-      });
+      );
 
-      console.log('[AddressValidatorTool] Response status:', response.status);
+      console.log("[AddressValidatorTool] Response status:", response.status);
 
       if (!response.ok) {
-        console.error('[AddressValidatorTool] API error - status not ok');
-        throw new Error(`API returned ${response.status}: ${response.statusText}`);
+        console.error("[AddressValidatorTool] API error - status not ok");
+        throw new Error(
+          `API returned ${response.status}: ${response.statusText}`,
+        );
       }
 
-      const data = await response.json() as AddressValidationResponse;
-      console.log('[AddressValidatorTool] Response data:', JSON.stringify(data, null, 2));
+      const data = (await response.json()) as AddressValidationResponse;
+      console.log(
+        "[AddressValidatorTool] Response data:",
+        JSON.stringify(data, null, 2),
+      );
 
       // Build summary for LLM
       const summary = buildValidationSummary(data, address);
 
       // Return structured data
-      return JSON.stringify({
-        success: data.success,
-        isValid: data.isValid,
-        summary,
-        formattedAddress: data.formattedAddress || null,
-        geocode: data.geocode || null,
-        addressComponents: data.addressComponents || null,
-        metadata: {
-          confidence: data.metadata?.confidence || 'UNKNOWN',
-          granularity: data.metadata?.granularity || 'UNKNOWN',
-          hasUnconfirmedComponents: data.metadata?.hasUnconfirmedComponents || false,
-          hasInferredComponents: data.metadata?.hasInferredComponents || false,
+      return JSON.stringify(
+        {
+          success: data.success,
+          isValid: data.isValid,
+          summary,
+          formattedAddress: data.formattedAddress || null,
+          geocode: data.geocode || null,
+          addressComponents: data.addressComponents || null,
+          metadata: {
+            confidence: data.metadata?.confidence || "UNKNOWN",
+            granularity: data.metadata?.granularity || "UNKNOWN",
+            hasUnconfirmedComponents:
+              data.metadata?.hasUnconfirmedComponents || false,
+            hasInferredComponents:
+              data.metadata?.hasInferredComponents || false,
+          },
+          originalAddress: address,
         },
-        originalAddress: address,
-      }, null, 2);
-
+        null,
+        2,
+      );
     } catch (error) {
-      console.error('[AddressValidatorTool] Error:', error);
+      console.error("[AddressValidatorTool] Error:", error);
 
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      const errorMessage =
+        error instanceof Error ? error.message : "Unknown error";
 
-      return JSON.stringify({
-        success: false,
-        isValid: false,
-        summary: `Address validation failed: ${errorMessage}. The validation service may be unavailable. You can still try searching for properties with this address.`,
-        formattedAddress: null,
-        geocode: null,
-        addressComponents: null,
-        metadata: {
-          confidence: 'UNKNOWN',
-          granularity: 'UNKNOWN',
-          hasUnconfirmedComponents: false,
-          hasInferredComponents: false,
+      return JSON.stringify(
+        {
+          success: false,
+          isValid: false,
+          summary: `Address validation failed: ${errorMessage}. The validation service may be unavailable. You can still try searching for properties with this address.`,
+          formattedAddress: null,
+          geocode: null,
+          addressComponents: null,
+          metadata: {
+            confidence: "UNKNOWN",
+            granularity: "UNKNOWN",
+            hasUnconfirmedComponents: false,
+            hasInferredComponents: false,
+          },
+          originalAddress: address,
+          error: errorMessage,
         },
-        originalAddress: address,
-        error: errorMessage,
-      }, null, 2);
+        null,
+        2,
+      );
     }
   },
 });

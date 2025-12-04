@@ -46,14 +46,15 @@ async function callPerplexityAPI(
   options?: {
     maxResults?: number;
     searchDomainFilter?: string[];
-  }
+  },
 ): Promise<string> {
   const apiKey = config.perplexity.apiKey;
 
   if (!apiKey) {
     return JSON.stringify({
       success: false,
-      error: "Perplexity API key not configured. Set PERPLEXITY_API_KEY in .env file.",
+      error:
+        "Perplexity API key not configured. Set PERPLEXITY_API_KEY in .env file.",
     });
   }
 
@@ -61,7 +62,7 @@ async function callPerplexityAPI(
     const response = await fetch("https://api.perplexity.ai/chat/completions", {
       method: "POST",
       headers: {
-        "Authorization": `Bearer ${apiKey}`,
+        Authorization: `Bearer ${apiKey}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
@@ -69,7 +70,8 @@ async function callPerplexityAPI(
         messages: [
           {
             role: "system",
-            content: "You are a helpful research assistant. Provide accurate, well-sourced information with citations.",
+            content:
+              "You are a helpful research assistant. Provide accurate, well-sourced information with citations.",
           },
           {
             role: "user",
@@ -88,10 +90,12 @@ async function callPerplexityAPI(
 
     if (!response.ok) {
       const errorText = await response.text();
-      throw new Error(`Perplexity API error (${response.status}): ${errorText}`);
+      throw new Error(
+        `Perplexity API error (${response.status}): ${errorText}`,
+      );
     }
 
-    const data = await response.json() as PerplexityResponse;
+    const data = (await response.json()) as PerplexityResponse;
 
     return JSON.stringify({
       success: true,
@@ -113,10 +117,18 @@ async function callPerplexityAPI(
  */
 export const perplexitySearchTool = new DynamicStructuredTool({
   name: "perplexity_search",
-  description: "Search the web using Perplexity AI to get recent, accurate information with citations. Use this for real-time information, current events, market data, or any questions requiring up-to-date web sources.",
+  description:
+    "Search the web using Perplexity AI to get recent, accurate information with citations. Use this for real-time information, current events, market data, or any questions requiring up-to-date web sources.",
   schema: z.object({
-    query: z.string().describe("The search query or question to ask Perplexity"),
-    searchDomainFilter: z.array(z.string()).optional().describe("Optional list of domains to limit search to (e.g., ['nytimes.com', 'reuters.com'])"),
+    query: z
+      .string()
+      .describe("The search query or question to ask Perplexity"),
+    searchDomainFilter: z
+      .array(z.string())
+      .optional()
+      .describe(
+        "Optional list of domains to limit search to (e.g., ['nytimes.com', 'reuters.com'])",
+      ),
   }),
   func: async ({ query, searchDomainFilter }) => {
     console.log(`[PerplexitySearchTool] Searching: "${query}"`);
@@ -130,10 +142,18 @@ export const perplexitySearchTool = new DynamicStructuredTool({
  */
 export const perplexityRealEstateResearchTool = new DynamicStructuredTool({
   name: "perplexity_real_estate_research",
-  description: "Research real estate market trends, neighborhood information, housing prices, or property-related topics using Perplexity AI. Get current market data with citations.",
+  description:
+    "Research real estate market trends, neighborhood information, housing prices, or property-related topics using Perplexity AI. Get current market data with citations.",
   schema: z.object({
-    topic: z.string().describe("The real estate topic to research (e.g., 'San Francisco housing market trends 2025', 'best neighborhoods in Oakland')"),
-    location: z.string().optional().describe("Specific location to focus the research on"),
+    topic: z
+      .string()
+      .describe(
+        "The real estate topic to research (e.g., 'San Francisco housing market trends 2025', 'best neighborhoods in Oakland')",
+      ),
+    location: z
+      .string()
+      .optional()
+      .describe("Specific location to focus the research on"),
   }),
   func: async ({ topic, location }) => {
     const query = location

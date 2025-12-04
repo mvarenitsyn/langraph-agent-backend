@@ -6,45 +6,45 @@
  */
 
 export interface ToolResponseLimits {
-  maxProperties: number;      // Max properties to return to LLM
-  maxChars: number;            // Max characters (~4 chars = 1 token)
-  essentialFields: string[];   // Fields to include in truncated responses
+  maxProperties: number; // Max properties to return to LLM
+  maxChars: number; // Max characters (~4 chars = 1 token)
+  essentialFields: string[]; // Fields to include in truncated responses
 }
 
 export const TOOL_RESPONSE_LIMITS: ToolResponseLimits = {
   maxProperties: 20,
-  maxChars: 10000,  // ~2500 tokens
+  maxChars: 10000, // ~2500 tokens
   essentialFields: [
     // Normalized field names (from search-executor / database)
-    'listingKey',           // PRIMARY - required for CMA and frontend identification
-    'address',              // Full address
-    'price',                // Price
-    'bedrooms',             // Bedrooms
-    'bathrooms',            // Bathrooms
-    'sqft',                 // Square footage
-    'city',                 // City
-    'state',                // State
+    "listingKey", // PRIMARY - required for CMA and frontend identification
+    "address", // Full address
+    "price", // Price
+    "bedrooms", // Bedrooms
+    "bathrooms", // Bathrooms
+    "sqft", // Square footage
+    "city", // City
+    "state", // State
     // Listing agent info (for user inquiries)
-    'listAgentFullName',    // Listing agent name
-    'listAgentMlsId',       // Listing agent MLS ID
-    'listOfficeName',       // Listing office/brokerage
-    'listAgentEmail',       // Listing agent email
-    'listAgentDirectPhone', // Listing agent phone
+    "listAgentFullName", // Listing agent name
+    "listAgentMlsId", // Listing agent MLS ID
+    "listOfficeName", // Listing office/brokerage
+    "listAgentEmail", // Listing agent email
+    "listAgentDirectPhone", // Listing agent phone
     // Also check MLS field names for backward compatibility
-    'ListingKey',
-    'UnparsedAddress',
-    'ListPrice',
-    'BedroomsTotal',
-    'BathroomsTotalInteger',
-    'LivingArea',
-    'City',
-    'StateOrProvince',
-    'ListAgentFullName',
-    'ListAgentMlsId',
-    'ListOfficeName',
-    'ListAgentEmail',
-    'ListAgentDirectPhone'
-  ]
+    "ListingKey",
+    "UnparsedAddress",
+    "ListPrice",
+    "BedroomsTotal",
+    "BathroomsTotalInteger",
+    "LivingArea",
+    "City",
+    "StateOrProvince",
+    "ListAgentFullName",
+    "ListAgentMlsId",
+    "ListOfficeName",
+    "ListAgentEmail",
+    "ListAgentDirectPhone",
+  ],
 };
 
 interface LimitedResponse {
@@ -70,20 +70,22 @@ export function createLimitedResponse(
   data: any,
   searchId: string,
   executionTimeMs: number,
-  limits: ToolResponseLimits = TOOL_RESPONSE_LIMITS
+  limits: ToolResponseLimits = TOOL_RESPONSE_LIMITS,
 ): LimitedResponse {
   const isArray = Array.isArray(data);
 
   // Case 1: Small array (<= maxProperties)
   if (isArray && data.length <= limits.maxProperties) {
     return {
-      summary: `Found ${data.length} ${data.length === 1 ? 'property' : 'properties'}`,
+      summary: `Found ${data.length} ${data.length === 1 ? "property" : "properties"}`,
       count: data.length,
-      properties: data.map(p => extractEssentialFields(p, limits.essentialFields)),
+      properties: data.map((p) =>
+        extractEssentialFields(p, limits.essentialFields),
+      ),
       savedToDatabase: true,
       searchId,
-      note: 'Full results saved to database and sent to frontend',
-      executionTimeMs
+      note: "Full results saved to database and sent to frontend",
+      executionTimeMs,
     };
   }
 
@@ -97,11 +99,11 @@ export function createLimitedResponse(
       statistics,
       sample: data
         .slice(0, limits.maxProperties)
-        .map(p => extractEssentialFields(p, limits.essentialFields)),
+        .map((p) => extractEssentialFields(p, limits.essentialFields)),
       savedToDatabase: true,
       searchId,
       note: `All ${data.length} filtered properties now displayed on frontend map/listview`,
-      executionTimeMs
+      executionTimeMs,
     };
   }
 
@@ -112,37 +114,37 @@ export function createLimitedResponse(
     // Small enough to return as-is
     if (json.length <= limits.maxChars) {
       return {
-        summary: 'Calculated result',
-        resultType: typeof data === 'object' ? 'statistics' : typeof data,
+        summary: "Calculated result",
+        resultType: typeof data === "object" ? "statistics" : typeof data,
         data,
         savedToDatabase: true,
         searchId,
-        note: 'Result saved to database',
-        executionTimeMs
+        note: "Result saved to database",
+        executionTimeMs,
       };
     }
 
     // Too large - truncate
     return {
-      summary: 'Result too large for display',
-      resultType: 'truncated',
-      data: json.substring(0, limits.maxChars) + '...',
+      summary: "Result too large for display",
+      resultType: "truncated",
+      data: json.substring(0, limits.maxChars) + "...",
       savedToDatabase: true,
       searchId,
-      note: 'Full result saved to database (preview shown)',
+      note: "Full result saved to database (preview shown)",
       size: `${Math.round(json.length / 1024)}KB`,
-      executionTimeMs
+      executionTimeMs,
     };
   }
 
   // Fallback: empty result
   return {
-    summary: 'No results',
+    summary: "No results",
     count: 0,
     savedToDatabase: true,
     searchId,
-    note: 'Empty result set',
-    executionTimeMs
+    note: "Empty result set",
+    executionTimeMs,
   };
 }
 
@@ -152,7 +154,7 @@ export function createLimitedResponse(
  */
 export function extractEssentialFields(
   property: any,
-  fields: string[] = TOOL_RESPONSE_LIMITS.essentialFields
+  fields: string[] = TOOL_RESPONSE_LIMITS.essentialFields,
 ): Record<string, any> {
   const extracted: Record<string, any> = {};
 
@@ -194,46 +196,46 @@ export function calculateStatistics(properties: any[]): {
 
   // Price statistics (check both lowercase and MLS field names)
   const prices = properties
-    .map(p => p.price ?? p.ListPrice)
-    .filter((p): p is number => typeof p === 'number' && !isNaN(p));
+    .map((p) => p.price ?? p.ListPrice)
+    .filter((p): p is number => typeof p === "number" && !isNaN(p));
 
   if (prices.length > 0) {
     stats.priceRange = {
       min: Math.min(...prices),
       max: Math.max(...prices),
-      avg: Math.round(prices.reduce((sum, p) => sum + p, 0) / prices.length)
+      avg: Math.round(prices.reduce((sum, p) => sum + p, 0) / prices.length),
     };
   }
 
   // Bedroom statistics (check both lowercase and MLS field names)
   const bedrooms = properties
-    .map(p => p.bedrooms ?? p.BedroomsTotal)
-    .filter((b): b is number => typeof b === 'number' && !isNaN(b));
+    .map((p) => p.bedrooms ?? p.BedroomsTotal)
+    .filter((b): b is number => typeof b === "number" && !isNaN(b));
 
   if (bedrooms.length > 0) {
     stats.bedroomRange = {
       min: Math.min(...bedrooms),
-      max: Math.max(...bedrooms)
+      max: Math.max(...bedrooms),
     };
   }
 
   // Bathroom statistics (check both lowercase and MLS field names)
   const bathrooms = properties
-    .map(p => p.bathrooms ?? p.BathroomsTotalInteger)
-    .filter((b): b is number => typeof b === 'number' && !isNaN(b));
+    .map((p) => p.bathrooms ?? p.BathroomsTotalInteger)
+    .filter((b): b is number => typeof b === "number" && !isNaN(b));
 
   if (bathrooms.length > 0) {
     stats.bathroomRange = {
       min: Math.min(...bathrooms),
-      max: Math.max(...bathrooms)
+      max: Math.max(...bathrooms),
     };
   }
 
   // City distribution (top 5 cities) - check both lowercase and MLS field names
   const cityCount: Record<string, number> = {};
-  properties.forEach(p => {
+  properties.forEach((p) => {
     const city = p.city ?? p.City;
-    if (city && typeof city === 'string') {
+    if (city && typeof city === "string") {
       cityCount[city] = (cityCount[city] || 0) + 1;
     }
   });
@@ -242,22 +244,25 @@ export function calculateStatistics(properties: any[]): {
     const topCities = Object.entries(cityCount)
       .sort(([, a], [, b]) => b - a)
       .slice(0, 5)
-      .reduce((acc, [city, count]) => {
-        acc[city] = count;
-        return acc;
-      }, {} as Record<string, number>);
+      .reduce(
+        (acc, [city, count]) => {
+          acc[city] = count;
+          return acc;
+        },
+        {} as Record<string, number>,
+      );
 
     stats.cities = topCities;
   }
 
   // Average square footage (check both lowercase and MLS field names)
   const sqFeet = properties
-    .map(p => p.sqft ?? p.LivingArea)
-    .filter((a): a is number => typeof a === 'number' && !isNaN(a));
+    .map((p) => p.sqft ?? p.LivingArea)
+    .filter((a): a is number => typeof a === "number" && !isNaN(a));
 
   if (sqFeet.length > 0) {
     stats.averageSquareFeet = Math.round(
-      sqFeet.reduce((sum, a) => sum + a, 0) / sqFeet.length
+      sqFeet.reduce((sum, a) => sum + a, 0) / sqFeet.length,
     );
   }
 

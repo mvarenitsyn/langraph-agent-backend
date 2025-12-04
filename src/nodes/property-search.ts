@@ -4,6 +4,8 @@ import { globalToolsRegistry } from "../tools/registry.js";
 import { createToolCallingModel, createResponseModel } from "../models/openai.js";
 import { uiEventPublisher } from "../pubsub/ui-event-publisher.js";
 import { sharedPublisher } from "../pubsub/shared.js";
+import { getPlatformContext, shouldPublishUIEvents } from "../utils/platformContext.js";
+import { buildFormattingInstructions, adaptMarkdown, truncateResponse } from "../utils/formatters.js";
 
 /**
  * Property Search Node - Mini Agent with Tool Loop
@@ -31,6 +33,10 @@ export async function propertySearchNode(state: AgentStateType): Promise<Partial
   const userName = userContext.fullName || 'there';
   const firstName = userName.split(' ')[0];
   const isAuthenticated = userContext.isAuthenticated || false;
+
+  // Resolve platform context
+  const platformContext = getPlatformContext(state);
+  console.log(`[PropertySearch] Platform: ${platformContext.platform} (supportsRichUI: ${platformContext.capabilities.supportsRichUI})`);
 
   if (isAuthenticated && userContext.userId) {
     console.log(`[PropertySearch] User: ${userName}`);
@@ -207,6 +213,9 @@ You don't need to manage retries - just call property_search once and the backen
     // Generate final response using a separate model
     const responseModel = createResponseModel();
 
+    // Add platform-specific formatting instructions
+    const platformFormattingInstructions = buildFormattingInstructions(platformContext);
+
     const responseInstructions = `
 **Your job:** Create a concise, helpful response based on the property search results.
 
@@ -219,6 +228,8 @@ ${isAuthenticated
 - Use bullet points for key information
 - Lead with key numbers (count, price range)
 - End with 1-2 clear next step suggestions
+
+${platformFormattingInstructions}
 
 Generate a focused response based on the tool results below.
 `;
@@ -235,13 +246,20 @@ Generate a focused response based on the tool results below.
     ];
 
     const finalResponseMsg = await responseModel.invoke(responseMessages);
-    const finalResponse = finalResponseMsg.content as string;
+    let finalResponse = finalResponseMsg.content as string;
 
     console.log('[PropertySearch] ✓ Response generated');
 
-    // Publish UI render event if we have search results
+    // Adapt response for non-web platforms
+    if (platformContext.platform !== 'web') {
+      finalResponse = adaptMarkdown(finalResponse, platformContext);
+      finalResponse = truncateResponse(finalResponse, platformContext);
+      console.log(`[PropertySearch] Response adapted for ${platformContext.platform} (${finalResponse.length} chars)`);
+    }
+
+    // Publish UI render event if we have search results (only for platforms that support UI)
     const propertySearchResult = toolResults?.['property_search'];
-    if (propertySearchResult) {
+    if (propertySearchResult && shouldPublishUIEvents(platformContext)) {
       try {
         const result = JSON.parse(propertySearchResult);
         if (result.success && result.totalCount > 0 && result.searchId) {
@@ -263,6 +281,8 @@ Generate a focused response based on the tool results below.
         console.error('[PropertySearch] Failed to publish UI render event:', error);
         // Don't fail the request if UI event publishing fails
       }
+    } else if (propertySearchResult) {
+      console.log('[PropertySearch] Skipping UI render event for non-web platform');
     }
 
     return {
@@ -270,6 +290,7 @@ Generate a focused response based on the tool results below.
       messages: [...toolMessages, new AIMessage({ content: finalResponse })],
       toolResults,
       metadata: state.metadata,  // Include updated metadata with searchId
+      platformContext,
     };
   } catch (error) {
     console.error('[PropertySearch] Error:', error);

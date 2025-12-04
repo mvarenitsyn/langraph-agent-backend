@@ -76,3 +76,23 @@ export interface PublishPropertyDetailsParams {
   userId?: string;
   correlationId: string;
 }
+
+/**
+ * Payload for login required rendering
+ */
+export interface LoginRequiredPayload {
+  reason: string;
+  feature: string;
+  message?: string;
+}
+
+/**
+ * Parameters for publishing login required events
+ */
+export interface PublishLoginRequiredParams {
+  reason: string;
+  feature: string;
+  message?: string;
+  sessionId: string;
+  correlationId: string;
+}

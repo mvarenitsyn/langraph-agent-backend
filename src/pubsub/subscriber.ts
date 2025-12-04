@@ -7,6 +7,8 @@ import { PubSub, Message } from '@google-cloud/pubsub';
 import { randomUUID } from 'crypto';
 import { AgentPublisher } from './publisher.js';
 import { createAgentGraph } from '../graph/index.js';
+import { resolvePlatformContext } from '../utils/platformContext.js';
+import { PlatformType } from '../types/platform.js';
 
 interface TokenBuffer {
   chunks: string[];
@@ -120,6 +122,14 @@ export class AgentSubscriber {
         email: userContext.email ? '***@***' : 'None',
       });
 
+      // Extract and resolve platform context
+      const platformRaw = payload?.platform || metadata?.platform || 'web';
+      const platformContext = resolvePlatformContext({ platform: platformRaw as PlatformType });
+      console.log('[Subscriber] ====== DEBUG: PlatformContext Extraction ======');
+      console.log('[Subscriber] Platform:', platformContext.platform);
+      console.log('[Subscriber] Supports Rich UI:', platformContext.capabilities.supportsRichUI);
+      console.log('[Subscriber] Max Message Length:', platformContext.capabilities.maxMessageLength);
+
       if (!query) {
         console.warn('[Subscriber] No query in message, acking anyway');
         message.ack();
@@ -189,7 +199,9 @@ export class AgentSubscriber {
             searchId: searchId || undefined,      // ✅ Current search ID (from parameters or latest property_search)
             incomingSearchId: searchId || undefined,  // 🚨 FIX: Fresh searchId that won't be overwritten by checkpoint
             lastSearchId: undefined,              // Previous search ID (for reference)
+            platform: platformContext.platform,   // Platform identifier for downstream nodes
           },
+          platformContext,  // Platform context for platform-aware behavior
         };
 
         console.log('[Subscriber] ====== DEBUG: Graph Invocation ======');

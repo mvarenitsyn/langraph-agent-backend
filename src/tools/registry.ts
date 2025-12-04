@@ -19,7 +19,9 @@ export class ToolsRegistry {
    */
   register(tool: DynamicStructuredTool): void {
     if (this.tools.has(tool.name)) {
-      console.warn(`[ToolsRegistry] Tool "${tool.name}" already registered. Overwriting...`);
+      console.warn(
+        `[ToolsRegistry] Tool "${tool.name}" already registered. Overwriting...`,
+      );
     }
     this.tools.set(tool.name, tool);
     console.log(`[ToolsRegistry] ✓ Registered tool: ${tool.name}`);
@@ -29,7 +31,7 @@ export class ToolsRegistry {
    * Register multiple tools at once
    */
   registerBatch(tools: DynamicStructuredTool[]): void {
-    tools.forEach(tool => this.register(tool));
+    tools.forEach((tool) => this.register(tool));
   }
 
   /**
@@ -76,7 +78,7 @@ export class ToolsRegistry {
    */
   clear(): void {
     this.tools.clear();
-    console.log('[ToolsRegistry] ✓ Cleared all tools');
+    console.log("[ToolsRegistry] ✓ Cleared all tools");
   }
 
   /**

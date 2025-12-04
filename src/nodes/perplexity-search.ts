@@ -2,6 +2,8 @@ import { AIMessage, HumanMessage, ToolMessage, SystemMessage } from "@langchain/
 import { AgentStateType } from "../types/state.js";
 import { globalToolsRegistry } from "../tools/registry.js";
 import { createToolCallingModel, createResponseModel } from "../models/openai.js";
+import { getPlatformContext } from "../utils/platformContext.js";
+import { buildFormattingInstructions, adaptMarkdown, truncateResponse } from "../utils/formatters.js";
 
 /**
  * Perplexity Search Node - Mini Agent with Tool Loop
@@ -22,6 +24,10 @@ export async function perplexitySearchNode(state: AgentStateType): Promise<Parti
   const userName = userContext.fullName || 'there';
   const firstName = userName.split(' ')[0];
   const isAuthenticated = userContext.isAuthenticated || false;
+
+  // Resolve platform context
+  const platformContext = getPlatformContext(state);
+  console.log(`[PerplexitySearch] Platform: ${platformContext.platform} (supportsRichUI: ${platformContext.capabilities.supportsRichUI})`);
 
   if (isAuthenticated && userContext.userId) {
     console.log(`[PerplexitySearch] User: ${userName}`);
@@ -162,6 +168,9 @@ After tools complete, I'll generate the final response for the user.
     // Generate final response using a separate model
     const responseModel = createResponseModel();
 
+    // Add platform-specific formatting instructions
+    const platformFormattingInstructions = buildFormattingInstructions(platformContext);
+
     const responseInstructions = `
 **Your job:** Create a concise, helpful response based on the research results.
 
@@ -174,6 +183,8 @@ ${isAuthenticated
 - Use bullet points for key information
 - Cite sources when available
 - End with 1-2 clear next step suggestions
+
+${platformFormattingInstructions}
 
 Generate a focused response based on the research results below.
 `;
@@ -190,14 +201,22 @@ Generate a focused response based on the research results below.
     ];
 
     const finalResponseMsg = await responseModel.invoke(responseMessages);
-    const finalResponse = finalResponseMsg.content as string;
+    let finalResponse = finalResponseMsg.content as string;
 
     console.log('[PerplexitySearch] ✓ Response generated');
+
+    // Adapt response for non-web platforms
+    if (platformContext.platform !== 'web') {
+      finalResponse = adaptMarkdown(finalResponse, platformContext);
+      finalResponse = truncateResponse(finalResponse, platformContext);
+      console.log(`[PerplexitySearch] Response adapted for ${platformContext.platform} (${finalResponse.length} chars)`);
+    }
 
     return {
       finalResponse,
       messages: [...toolMessages, new AIMessage({ content: finalResponse })],
       toolResults,
+      platformContext,
     };
   } catch (error) {
     console.error('[PerplexitySearch] Error:', error);

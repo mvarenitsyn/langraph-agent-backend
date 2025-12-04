@@ -6,6 +6,8 @@ import { globalToolsRegistry } from "../tools/registry.js";
 import { createToolCallingModel, createResponseModel } from "../models/openai.js";
 import { uiEventPublisher } from "../pubsub/ui-event-publisher.js";
 import { sharedPublisher } from "../pubsub/shared.js";
+import { getPlatformContext, filterToolsForPlatform, shouldPublishUIEvents } from "../utils/platformContext.js";
+import { buildFormattingInstructions, adaptMarkdown, truncateResponse } from "../utils/formatters.js";
 
 /**
  * Property Operations Node - Multi-Tool Agent
@@ -58,6 +60,10 @@ export async function propertyOperationsNode(state: AgentStateType): Promise<Par
   const userName = userContext.fullName || 'there';
   const firstName = userName.split(' ')[0];
   const isAuthenticated = userContext.isAuthenticated || false;
+
+  // Resolve platform context
+  const platformContext = getPlatformContext(state);
+  console.log(`[PropertyOperations] Platform: ${platformContext.platform} (supportsRichUI: ${platformContext.capabilities.supportsRichUI})`);
 
   if (isAuthenticated && userContext.userId) {
     console.log(`[PropertyOperations] User: ${userName}`);
@@ -254,11 +260,15 @@ export async function propertyOperationsNode(state: AgentStateType): Promise<Par
     }
 
     console.log('[PropertyOperations] ✓ Tools wrapped:', wrappedTools.map(t => t.name).join(', '));
-    console.log(`[PropertyOperations] Binding ${wrappedTools.length} tools to LLM`);
 
-    // Create model with wrapped tools bound
+    // Filter tools based on platform capabilities
+    const platformFilteredTools = filterToolsForPlatform(wrappedTools, platformContext);
+    console.log(`[PropertyOperations] ✓ Tools after platform filtering: ${platformFilteredTools.map(t => t.name).join(', ')}`);
+    console.log(`[PropertyOperations] Binding ${platformFilteredTools.length} tools to LLM`);
+
+    // Create model with filtered tools bound
     const toolModel = createToolCallingModel();
-    const modelWithTools = toolModel.bindTools(wrappedTools);
+    const modelWithTools = toolModel.bindTools(platformFilteredTools);
 
     console.log('[PropertyOperations] ✓ Tools bound to model successfully');
 
@@ -477,11 +487,18 @@ The UI will automatically render based on tool results:
 
     console.log('[PropertyOperations] ✓ Tool execution completed, generating final response...');
 
-    // Publish UI render events for successful tool executions
-    await publishUIEventsForTools(toolResults, state);
+    // Publish UI render events for successful tool executions (only for platforms that support UI)
+    if (shouldPublishUIEvents(platformContext)) {
+      await publishUIEventsForTools(toolResults, state);
+    } else {
+      console.log('[PropertyOperations] Skipping UI events for non-web platform');
+    }
 
     // Generate final response using a separate model
     const responseModel = createResponseModel();
+
+    // Add platform-specific formatting instructions
+    const platformFormattingInstructions = buildFormattingInstructions(platformContext);
 
     const responseInstructions = `
 **Your job:** Create a concise, helpful response based on the tool execution results.
@@ -496,6 +513,8 @@ ${isAuthenticated
 - Summarize what was done and what was found
 - If property details were retrieved, highlight key features
 - End with 1-2 clear next step suggestions
+
+${platformFormattingInstructions}
 
 Generate a focused response based on the tool results below.
 `;
@@ -516,9 +535,16 @@ Generate a focused response based on the tool results below.
     ];
 
     const finalResponseMsg = await responseModel.invoke(responseMessages);
-    const finalResponse = finalResponseMsg.content as string;
+    let finalResponse = finalResponseMsg.content as string;
 
     console.log('[PropertyOperations] ✓ Response generated');
+
+    // Adapt response for non-web platforms
+    if (platformContext.platform !== 'web') {
+      finalResponse = adaptMarkdown(finalResponse, platformContext);
+      finalResponse = truncateResponse(finalResponse, platformContext);
+      console.log(`[PropertyOperations] Response adapted for ${platformContext.platform} (${finalResponse.length} chars)`);
+    }
 
     // CRITICAL: Don't return messages! LangGraph's concat reducer will add these
     // to existing state.messages which may already contain orphaned ToolMessages
@@ -527,6 +553,7 @@ Generate a focused response based on the tool results below.
     return {
       finalResponse,
       toolResults,
+      platformContext,
     };
   } catch (error) {
     console.error('[PropertyOperations] Error:', error);

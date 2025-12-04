@@ -5,6 +5,7 @@ import {
   PublishUIEventParams,
   PublishSearchResultsParams,
   PublishPropertyDetailsParams,
+  PublishLoginRequiredParams,
 } from '../types/ui-events';
 import { config } from '../config/index.js';
 
@@ -100,6 +101,27 @@ export class UIEventPublisher {
       },
       sessionId: params.sessionId,
       userId: params.userId,
+      correlationId: params.correlationId,
+    });
+  }
+
+  /**
+   * Convenience method for publishing login required events
+   *
+   * @param params - Login required parameters
+   */
+  async publishLoginRequired(
+    params: PublishLoginRequiredParams
+  ): Promise<void> {
+    await this.publishUIEvent({
+      renderType: 'login_required',
+      data: {
+        reason: params.reason,
+        feature: params.feature,
+        message: params.message || 'Please log in to continue',
+      },
+      sessionId: params.sessionId,
+      userId: undefined, // No userId since user is not authenticated
       correlationId: params.correlationId,
     });
   }

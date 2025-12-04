@@ -4,6 +4,8 @@ import { createToolCallingModel, createResponseModel, createRouterModel } from "
 import { globalToolsRegistry } from "../tools/registry.js";
 import { getUserContextById } from "../utils/userContext.js";
 import { sharedPublisher } from "../pubsub/shared.js";
+import { getPlatformContext } from "../utils/platformContext.js";
+import { buildFormattingInstructions, adaptMarkdown, truncateResponse } from "../utils/formatters.js";
 
 /**
  * Router Node - LLM-Based Decision Making
@@ -44,6 +46,10 @@ export async function routerNode(state: AgentStateType): Promise<Partial<AgentSt
     console.log(`  - CMAs: ${userContext.cmasCount}`);
     console.log(`  - Showings: ${userContext.showingsCount}`);
   }
+
+  // Resolve platform context
+  const platformContext = getPlatformContext(state);
+  console.log(`[Router] Platform: ${platformContext.platform} (supportsRichUI: ${platformContext.capabilities.supportsRichUI})`);
 
   try {
     // Create model with streaming DISABLED for router decisions
@@ -140,6 +146,10 @@ When the user asks about "my listings", "my collections", "my CMAs", or "my show
 **Note:** This user is not authenticated. To access personalized features like saved listings, collections, CMAs, and showings, they need to sign in.`;
     }
 
+    // Add platform-specific formatting instructions
+    const platformFormattingInstructions = buildFormattingInstructions(platformContext);
+    systemPrompt += '\n' + platformFormattingInstructions;
+
     // 🚨 FIX: Use incomingSearchId (fresh from Pub/Sub) if available, otherwise fall back to checkpointed searchId
     const currentSearchId = state.metadata?.incomingSearchId || state.metadata?.searchId;
     const hasActiveSearch = !!currentSearchId;
@@ -184,7 +194,21 @@ Reply with ONLY ONE of these exact phrases at the start of your response:
    - Get search results ("what did we find?", "show me the results")
    - Get property details ("tell me about 123 Main St", "details on first property")
 4. "ROUTE: PERPLEXITY_SEARCH" - when user asks about neighborhoods, schools, amenities, market trends, best areas, etc.
-5. Otherwise, just answer the question directly (greetings, simple questions, capability questions)
+5. "ROUTE: COLLECTIONS" - when user wants to manage property collections:
+   - Create collection ("create a collection called Favorites")
+   - List collections ("show my collections")
+   - Add property to collection ("add this to my Favorites")
+   - Share collection ("share my Miami collection")
+6. "ROUTE: SHOWINGS" - when user wants to schedule/manage showings:
+   - Schedule showing ("schedule a showing for this property")
+   - List showings ("what showings do I have?")
+   - Reschedule showing ("reschedule my showing to tomorrow")
+   - Cancel showing ("cancel my showing")
+7. "ROUTE: COMMISSIONS" - when user wants commission information:
+   - Request commission ("request commission info")
+   - List commission requests ("show my commission requests")
+   - Check commission updates ("any commission responses?")
+8. Otherwise, just answer the question directly (greetings, simple questions, capability questions)
 
 Examples:
 - "find 2 bedroom in aventura" → "ROUTE: PROPERTY_SEARCH"
@@ -196,6 +220,16 @@ Examples:
 - "details on the first property" → "ROUTE: PROPERTY_OPERATIONS"
 - "filter to 3BR and show me the cheapest" → "ROUTE: PROPERTY_OPERATIONS"
 - "what are the best neighborhoods in Miami?" → "ROUTE: PERPLEXITY_SEARCH"
+- "create a collection called Favorites" → "ROUTE: COLLECTIONS"
+- "add this property to my collection" → "ROUTE: COLLECTIONS"
+- "show my collections" → "ROUTE: COLLECTIONS"
+- "share my Miami collection" → "ROUTE: COLLECTIONS"
+- "schedule a showing for this property" → "ROUTE: SHOWINGS"
+- "what showings do I have?" → "ROUTE: SHOWINGS"
+- "cancel my showing for tomorrow" → "ROUTE: SHOWINGS"
+- "request commission info" → "ROUTE: COMMISSIONS"
+- "what commission requests are pending?" → "ROUTE: COMMISSIONS"
+- "any commission responses?" → "ROUTE: COMMISSIONS"
 - "hi" → "Hi there! How can I help you today?"
 `;
 
@@ -221,6 +255,7 @@ Examples:
         return {
           messages: [userMessage],
           userContext,
+          platformContext,
           metadata: {
             ...state.metadata,
             searchId: currentSearchId,  // 🚨 FIX: Use resolved searchId
@@ -228,17 +263,20 @@ Examples:
             shouldFilterProperties: false,
             shouldUsePropertyOperations: true,
             shouldSearchPerplexity: false,
+            shouldUseCollections: false,
+            shouldUseShowings: false,
+            shouldUseCommissions: false,
           },
         };
       }
     }
 
     // No active search - use LLM to decide routing
-    // Include previous conversation history for context
-    // This enables the agent to remember user's name, preferences, and previous interactions
+    // 🚨 FIX: Start fresh without conversation history to avoid tool_calls/tool messages mismatch
+    // The router only needs current message + user context to make routing decisions
+    // Including checkpoint history can cause OpenAI API errors if it contains orphaned tool messages
     const messages = [
       new SystemMessage({ content: `${systemPrompt}\n${instructions}` }),
-      ...(state.messages || []), // Include conversation history from checkpoint
       userMessage,
     ];
 
@@ -264,12 +302,16 @@ Examples:
       return {
         messages: [userMessage],
         userContext,
+        platformContext,
         metadata: {
           ...state.metadata,
           shouldSearchProperties: true,
           shouldFilterProperties: false,
           shouldUsePropertyOperations: false,
           shouldSearchPerplexity: false,
+          shouldUseCollections: false,
+          shouldUseShowings: false,
+          shouldUseCommissions: false,
         },
       };
     } else if (/ROUTE:\s*PROPERTY[_\s]OPERATIONS/i.test(responseText)) {
@@ -277,12 +319,16 @@ Examples:
       return {
         messages: [userMessage],
         userContext,
+        platformContext,
         metadata: {
           ...state.metadata,
           shouldSearchProperties: false,
           shouldFilterProperties: false,
           shouldUsePropertyOperations: true,
           shouldSearchPerplexity: false,
+          shouldUseCollections: false,
+          shouldUseShowings: false,
+          shouldUseCommissions: false,
         },
       };
     } else if (/ROUTE:\s*PROPERTY[_\s]FILTER/i.test(responseText)) {
@@ -290,12 +336,16 @@ Examples:
       return {
         messages: [userMessage],
         userContext,
+        platformContext,
         metadata: {
           ...state.metadata,
           shouldSearchProperties: false,
           shouldFilterProperties: true,
           shouldUsePropertyOperations: false,
           shouldSearchPerplexity: false,
+          shouldUseCollections: false,
+          shouldUseShowings: false,
+          shouldUseCommissions: false,
         },
       };
     } else if (/ROUTE:\s*PERPLEXITY[_\s]SEARCH/i.test(responseText)) {
@@ -303,28 +353,94 @@ Examples:
       return {
         messages: [userMessage],
         userContext,
+        platformContext,
         metadata: {
           ...state.metadata,
           shouldSearchProperties: false,
           shouldFilterProperties: false,
           shouldUsePropertyOperations: false,
           shouldSearchPerplexity: true,
+          shouldUseCollections: false,
+          shouldUseShowings: false,
+          shouldUseCommissions: false,
         },
       };
-    } else {
-      // No routing - router generated response directly
-      console.log('[Router] ✓ Generated response directly (no routing needed)');
-
+    } else if (/ROUTE:\s*COLLECTIONS/i.test(responseText)) {
+      console.log('[Router] ✓ Routing to collections');
       return {
-        messages: [userMessage, response],
+        messages: [userMessage],
         userContext,
-        finalResponse: responseText,
+        platformContext,
         metadata: {
           ...state.metadata,
           shouldSearchProperties: false,
           shouldFilterProperties: false,
           shouldUsePropertyOperations: false,
           shouldSearchPerplexity: false,
+          shouldUseCollections: true,
+          shouldUseShowings: false,
+          shouldUseCommissions: false,
+        },
+      };
+    } else if (/ROUTE:\s*SHOWINGS/i.test(responseText)) {
+      console.log('[Router] ✓ Routing to showings');
+      return {
+        messages: [userMessage],
+        userContext,
+        platformContext,
+        metadata: {
+          ...state.metadata,
+          shouldSearchProperties: false,
+          shouldFilterProperties: false,
+          shouldUsePropertyOperations: false,
+          shouldSearchPerplexity: false,
+          shouldUseCollections: false,
+          shouldUseShowings: true,
+          shouldUseCommissions: false,
+        },
+      };
+    } else if (/ROUTE:\s*COMMISSIONS/i.test(responseText)) {
+      console.log('[Router] ✓ Routing to commissions');
+      return {
+        messages: [userMessage],
+        userContext,
+        platformContext,
+        metadata: {
+          ...state.metadata,
+          shouldSearchProperties: false,
+          shouldFilterProperties: false,
+          shouldUsePropertyOperations: false,
+          shouldSearchPerplexity: false,
+          shouldUseCollections: false,
+          shouldUseShowings: false,
+          shouldUseCommissions: true,
+        },
+      };
+    } else {
+      // No routing - router generated response directly
+      console.log('[Router] ✓ Generated response directly (no routing needed)');
+
+      // Adapt response for non-web platforms
+      let adaptedResponse = responseText;
+      if (platformContext.platform !== 'web') {
+        adaptedResponse = adaptMarkdown(adaptedResponse, platformContext);
+        adaptedResponse = truncateResponse(adaptedResponse, platformContext);
+      }
+
+      return {
+        messages: [userMessage, response],
+        userContext,
+        platformContext,
+        finalResponse: adaptedResponse,
+        metadata: {
+          ...state.metadata,
+          shouldSearchProperties: false,
+          shouldFilterProperties: false,
+          shouldUsePropertyOperations: false,
+          shouldSearchPerplexity: false,
+          shouldUseCollections: false,
+          shouldUseShowings: false,
+          shouldUseCommissions: false,
         },
       };
     }

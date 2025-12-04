@@ -7,9 +7,10 @@
 
 import { DynamicStructuredTool } from "@langchain/core/tools";
 import { z } from "zod";
-import https from 'https';
+import https from "https";
+import { uiEventPublisher } from "../pubsub/ui-event-publisher.js";
 
-const BACKEND_URL = process.env.BACKEND_URL || 'https://localhost:3001';
+const BACKEND_URL = process.env.BACKEND_URL || "https://localhost:3001";
 
 // Skip SSL verification for local development
 const httpsAgent = new https.Agent({ rejectUnauthorized: false });
@@ -24,7 +25,7 @@ interface CMAJobResponse {
 interface CMAStatusResponse {
   jobId: string;
   listingKey: string;
-  status: 'queued' | 'processing' | 'completed' | 'failed';
+  status: "queued" | "processing" | "completed" | "failed";
   progress?: {
     percentage: number;
     currentStep: string;
@@ -68,31 +69,37 @@ async function pollCMAJob(
   jobId: string,
   userId: string,
   maxWaitMs: number = 120000, // 2 minutes max
-  pollIntervalMs: number = 3000
+  pollIntervalMs: number = 3000,
 ): Promise<CMAReportResponse | null> {
   const startTime = Date.now();
 
   while (Date.now() - startTime < maxWaitMs) {
     // Check status
-    const statusRes = await fetch(`${BACKEND_URL}/api/v2.5/cma/status/${jobId}`, {
-      headers: { 'x-user-id': userId },
-      // @ts-ignore - Node fetch supports agent
-      agent: httpsAgent,
-    });
+    const statusRes = await fetch(
+      `${BACKEND_URL}/api/v2.5/cma/status/${jobId}`,
+      {
+        headers: { "x-user-id": userId },
+        // @ts-ignore - Node fetch supports agent
+        agent: httpsAgent,
+      },
+    );
 
     if (!statusRes.ok) {
       throw new Error(`Status check failed: ${statusRes.status}`);
     }
 
-    const status = await statusRes.json() as CMAStatusResponse;
+    const status = (await statusRes.json()) as CMAStatusResponse;
 
-    if (status.status === 'completed') {
+    if (status.status === "completed") {
       // Fetch full report
-      const reportRes = await fetch(`${BACKEND_URL}/api/v2.5/cma/report/${jobId}`, {
-        headers: { 'x-user-id': userId },
-        // @ts-ignore
-        agent: httpsAgent,
-      });
+      const reportRes = await fetch(
+        `${BACKEND_URL}/api/v2.5/cma/report/${jobId}`,
+        {
+          headers: { "x-user-id": userId },
+          // @ts-ignore
+          agent: httpsAgent,
+        },
+      );
 
       if (!reportRes.ok) {
         throw new Error(`Report fetch failed: ${reportRes.status}`);
@@ -101,20 +108,22 @@ async function pollCMAJob(
       return reportRes.json() as Promise<CMAReportResponse>;
     }
 
-    if (status.status === 'failed') {
-      throw new Error(status.error?.message || 'CMA generation failed');
+    if (status.status === "failed") {
+      throw new Error(status.error?.message || "CMA generation failed");
     }
 
     // Log progress
     if (status.progress) {
-      console.log(`[CMA] Progress: ${status.progress.percentage}% - ${status.progress.currentStep}`);
+      console.log(
+        `[CMA] Progress: ${status.progress.percentage}% - ${status.progress.currentStep}`,
+      );
     }
 
     // Wait before next poll
-    await new Promise(resolve => setTimeout(resolve, pollIntervalMs));
+    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
   }
 
-  throw new Error('CMA generation timed out');
+  throw new Error("CMA generation timed out");
 }
 
 /**
@@ -151,13 +160,27 @@ Use this tool when the user asks for:
 The report takes 30-90 seconds to generate.`,
 
   schema: z.object({
-    listingKey: z.string().describe("The property's ListingKey from search results"),
-    enableAIInsights: z.boolean().optional().describe("Include AI-powered market insights (default: true)"),
-    maxComps: z.number().optional().describe("Maximum comparable properties to analyze (default: 10)"),
-    radiusMiles: z.number().optional().describe("Search radius for comparables in miles (default: 3)"),
+    listingKey: z
+      .string()
+      .describe("The property's ListingKey from search results"),
+    enableAIInsights: z
+      .boolean()
+      .optional()
+      .describe("Include AI-powered market insights (default: true)"),
+    maxComps: z
+      .number()
+      .optional()
+      .describe("Maximum comparable properties to analyze (default: 10)"),
+    radiusMiles: z
+      .number()
+      .optional()
+      .describe("Search radius for comparables in miles (default: 3)"),
   }),
 
-  func: async ({ listingKey, enableAIInsights, maxComps, radiusMiles }, config) => {
+  func: async (
+    { listingKey, enableAIInsights, maxComps, radiusMiles },
+    config,
+  ) => {
     console.log(`[CMA] Generating CMA for listingKey: ${listingKey}`);
 
     // Extract user info from config
@@ -165,21 +188,26 @@ The report takes 30-90 seconds to generate.`,
     const sessionId = (config as any)?.metadata?.sessionId;
 
     if (!userId) {
-      return JSON.stringify({
-        success: false,
-        error: 'Authentication required',
-        message: 'CMA generation requires user authentication. Please log in to generate CMA reports.',
-      }, null, 2);
+      return JSON.stringify(
+        {
+          success: false,
+          error: "Authentication required",
+          message:
+            "CMA generation requires user authentication. Please log in to generate CMA reports.",
+        },
+        null,
+        2,
+      );
     }
 
     try {
       // Step 1: Create CMA job
       console.log(`[CMA] Creating job for user ${userId}`);
       const createRes = await fetch(`${BACKEND_URL}/api/v2.5/cma`, {
-        method: 'POST',
+        method: "POST",
         headers: {
-          'Content-Type': 'application/json',
-          'x-user-id': userId,
+          "Content-Type": "application/json",
+          "x-user-id": userId,
         },
         body: JSON.stringify({
           listingKey,
@@ -194,15 +222,24 @@ The report takes 30-90 seconds to generate.`,
       });
 
       if (!createRes.ok) {
-        const errorData = await createRes.json().catch(() => ({ error: 'Unknown error' })) as { error?: string; message?: string };
-        return JSON.stringify({
-          success: false,
-          error: errorData.error || 'Failed to create CMA job',
-          message: errorData.message || 'Unable to start CMA generation',
-        }, null, 2);
+        const errorData = (await createRes
+          .json()
+          .catch(() => ({ error: "Unknown error" }))) as {
+          error?: string;
+          message?: string;
+        };
+        return JSON.stringify(
+          {
+            success: false,
+            error: errorData.error || "Failed to create CMA job",
+            message: errorData.message || "Unable to start CMA generation",
+          },
+          null,
+          2,
+        );
       }
 
-      const jobData = await createRes.json() as CMAJobResponse;
+      const jobData = (await createRes.json()) as CMAJobResponse;
       console.log(`[CMA] Job created: ${jobData.jobId}`);
 
       // Step 2: Poll for completion
@@ -210,11 +247,15 @@ The report takes 30-90 seconds to generate.`,
       const report = await pollCMAJob(jobData.jobId, userId);
 
       if (!report) {
-        return JSON.stringify({
-          success: false,
-          error: 'CMA generation failed',
-          message: 'Unable to retrieve CMA report',
-        }, null, 2);
+        return JSON.stringify(
+          {
+            success: false,
+            error: "CMA generation failed",
+            message: "Unable to retrieve CMA report",
+          },
+          null,
+          2,
+        );
       }
 
       // Step 3: Format response for LLM
@@ -240,8 +281,14 @@ The report takes 30-90 seconds to generate.`,
         summaryParts.push(`Top 3 comparables:`);
         data.comps.slice(0, 3).forEach((comp: any, i: number) => {
           const price = comp.closePrice || comp.listPrice;
-          const address = comp.address || comp.UnparsedAddress || comp.unparsedAddress || 'Address N/A';
-          summaryParts.push(`${i + 1}. ${address} - $${price?.toLocaleString() || 'N/A'}`);
+          const address =
+            comp.address ||
+            comp.UnparsedAddress ||
+            comp.unparsedAddress ||
+            "Address N/A";
+          summaryParts.push(
+            `${i + 1}. ${address} - $${price?.toLocaleString() || "N/A"}`,
+          );
         });
       }
 
@@ -261,30 +308,38 @@ The report takes 30-90 seconds to generate.`,
 
       console.log(`[CMA] ✓ Report generated successfully`);
 
-      return JSON.stringify({
-        success: true,
-        summary: summaryParts.join('\n'),
-        jobId: report.jobId,
-        listingKey: report.listingKey,
-        estimatedPrice: data.estimatedPrice,
-        priceRange: { low: data.lowPrice, high: data.highPrice },
-        pricePerSqft: data.estimatedPPSF,
-        confidenceScore: data.confidenceScore,
-        compQuality: data.compQuality,
-        compsCount: data.comps.length,
-        hasAIInsights: !!data.aiInsights,
-        reportUrl: `${BACKEND_URL}/api/v2.5/cma/report/${report.jobId}`,
-        generatedAt: report.metadata.generatedAt,
-      }, null, 2);
-
+      return JSON.stringify(
+        {
+          success: true,
+          summary: summaryParts.join("\n"),
+          jobId: report.jobId,
+          listingKey: report.listingKey,
+          estimatedPrice: data.estimatedPrice,
+          priceRange: { low: data.lowPrice, high: data.highPrice },
+          pricePerSqft: data.estimatedPPSF,
+          confidenceScore: data.confidenceScore,
+          compQuality: data.compQuality,
+          compsCount: data.comps.length,
+          hasAIInsights: !!data.aiInsights,
+          reportUrl: `${BACKEND_URL}/api/v2.5/cma/report/${report.jobId}`,
+          generatedAt: report.metadata.generatedAt,
+        },
+        null,
+        2,
+      );
     } catch (error) {
-      console.error('[CMA] Error:', error);
+      console.error("[CMA] Error:", error);
 
-      return JSON.stringify({
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error',
-        message: 'CMA generation failed. Please try again or contact support.',
-      }, null, 2);
+      return JSON.stringify(
+        {
+          success: false,
+          error: error instanceof Error ? error.message : "Unknown error",
+          message:
+            "CMA generation failed. Please try again or contact support.",
+        },
+        null,
+        2,
+      );
     }
   },
 });
@@ -304,19 +359,50 @@ Use this when the user wants to:
 - Review their CMA history`,
 
   schema: z.object({
-    limit: z.number().optional().describe("Number of reports to return (default: 10)"),
+    limit: z
+      .number()
+      .optional()
+      .describe("Number of reports to return (default: 10)"),
     offset: z.number().optional().describe("Pagination offset (default: 0)"),
   }),
 
   func: async ({ limit, offset }, config) => {
     const userId = (config as any)?.metadata?.userId;
 
+    const sessionId = (config as any)?.metadata?.sessionId;
+
+    const correlationId = (config as any)?.metadata?.correlationId;
+
     if (!userId) {
-      return JSON.stringify({
-        success: false,
-        error: 'Authentication required',
-        message: 'Please log in to view your CMA history.',
-      }, null, 2);
+      // Publish login required UI event
+
+      if (sessionId && correlationId) {
+        await uiEventPublisher.publishLoginRequired({
+          reason: "Authentication required",
+
+          feature: "cma",
+
+          message: "Please log in to view your CMA history.",
+
+          sessionId,
+
+          correlationId,
+        });
+      }
+
+      return JSON.stringify(
+        {
+          success: false,
+
+          error: "Authentication required",
+
+          message: "Please log in to view your CMA history.",
+
+          requiresAuth: true,
+        },
+        null,
+        2,
+      );
     }
 
     const actualLimit = limit ?? 10;
@@ -326,17 +412,17 @@ Use this when the user wants to:
       const res = await fetch(
         `${BACKEND_URL}/api/v2.5/cma/history?limit=${actualLimit}&offset=${actualOffset}`,
         {
-          headers: { 'x-user-id': userId },
+          headers: { "x-user-id": userId },
           // @ts-ignore
           agent: httpsAgent,
-        }
+        },
       );
 
       if (!res.ok) {
         throw new Error(`Failed to fetch history: ${res.status}`);
       }
 
-      const data = await res.json() as {
+      const data = (await res.json()) as {
         jobs: any[];
         pagination: { total: number; hasMore: boolean };
       };
@@ -352,20 +438,27 @@ Use this when the user wants to:
         completedAt: job.completedAt,
       }));
 
-      return JSON.stringify({
-        success: true,
-        jobs: jobsSummary,
-        totalCount: data.pagination.total,
-        hasMore: data.pagination.hasMore,
-      }, null, 2);
-
+      return JSON.stringify(
+        {
+          success: true,
+          jobs: jobsSummary,
+          totalCount: data.pagination.total,
+          hasMore: data.pagination.hasMore,
+        },
+        null,
+        2,
+      );
     } catch (error) {
-      console.error('[CMA History] Error:', error);
+      console.error("[CMA History] Error:", error);
 
-      return JSON.stringify({
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error',
-      }, null, 2);
+      return JSON.stringify(
+        {
+          success: false,
+          error: error instanceof Error ? error.message : "Unknown error",
+        },
+        null,
+        2,
+      );
     }
   },
 });

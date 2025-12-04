@@ -12,12 +12,12 @@ import { z } from "zod";
 import {
   createLimitedResponse,
   formatLimitedResponse,
-  TOOL_RESPONSE_LIMITS
+  TOOL_RESPONSE_LIMITS,
 } from "./response-limiter.js";
 import {
   getSearchResults as getSearchResultsFromDB,
   getSearchMetadata,
-  getPropertyByListingKey
+  getPropertyByListingKey,
 } from "../subgraphs/property-search/db/search-results.js";
 
 /**
@@ -72,28 +72,77 @@ Examples:
 
   schema: z.object({
     searchId: z.string().describe("UUID of the search result to filter/sort"),
-    sortBy: z.enum(['price', 'bedrooms', 'sqft', 'combined_score', 'year_built']).optional().describe("Field to sort by (default: combined_score)"),
-    sortOrder: z.enum(['asc', 'desc']).optional().describe("Sort direction: asc (ascending) or desc (descending, default)"),
+    sortBy: z
+      .enum(["price", "bedrooms", "sqft", "combined_score", "year_built"])
+      .optional()
+      .describe("Field to sort by (default: combined_score)"),
+    sortOrder: z
+      .enum(["asc", "desc"])
+      .optional()
+      .describe(
+        "Sort direction: asc (ascending) or desc (descending, default)",
+      ),
     minPrice: z.number().optional().describe("Minimum price filter"),
     maxPrice: z.number().optional().describe("Maximum price filter"),
     minBeds: z.number().optional().describe("Minimum bedrooms filter"),
     maxBeds: z.number().optional().describe("Maximum bedrooms filter"),
-    cities: z.array(z.string()).optional().describe("Filter by city names (e.g., ['Miami', 'Aventura'])"),
-    status: z.array(z.string()).optional().describe("Filter by listing status (e.g., ['Active', 'Pending'])"),
+    cities: z
+      .array(z.string())
+      .optional()
+      .describe("Filter by city names (e.g., ['Miami', 'Aventura'])"),
+    status: z
+      .array(z.string())
+      .optional()
+      .describe("Filter by listing status (e.g., ['Active', 'Pending'])"),
     page: z.number().optional().describe("Page number (default: 1)"),
-    pageSize: z.number().optional().describe("Results per page (default: 20, max: 100)")
+    pageSize: z
+      .number()
+      .optional()
+      .describe("Results per page (default: 20, max: 100)"),
   }),
 
-  func: async ({ searchId, sortBy, sortOrder, minPrice, maxPrice, minBeds, maxBeds, cities, status, page, pageSize }, config) => {
-    console.log(`[PropertyFilterSortTool] SQL-based filter/sort for searchId: ${searchId}`);
-    console.log(`[PropertyFilterSortTool] Params:`, { sortBy, sortOrder, minPrice, maxPrice, minBeds, maxBeds, cities, status, page, pageSize });
+  func: async (
+    {
+      searchId,
+      sortBy,
+      sortOrder,
+      minPrice,
+      maxPrice,
+      minBeds,
+      maxBeds,
+      cities,
+      status,
+      page,
+      pageSize,
+    },
+    config,
+  ) => {
+    console.log(
+      `[PropertyFilterSortTool] SQL-based filter/sort for searchId: ${searchId}`,
+    );
+    console.log(`[PropertyFilterSortTool] Params:`, {
+      sortBy,
+      sortOrder,
+      minPrice,
+      maxPrice,
+      minBeds,
+      maxBeds,
+      cities,
+      status,
+      page,
+      pageSize,
+    });
 
     if (!searchId) {
-      return JSON.stringify({
-        success: false,
-        error: 'searchId is required',
-        suggestion: 'Call property_search first to get a searchId',
-      }, null, 2);
+      return JSON.stringify(
+        {
+          success: false,
+          error: "searchId is required",
+          suggestion: "Call property_search first to get a searchId",
+        },
+        null,
+        2,
+      );
     }
 
     try {
@@ -102,8 +151,8 @@ Examples:
       // Use SQL-based filtering from search-results.ts
       const { results, pageInfo } = await getSearchResultsFromDB({
         searchId,
-        sortBy: sortBy || 'combined_score',
-        sortOrder: sortOrder || 'desc',
+        sortBy: sortBy || "combined_score",
+        sortOrder: sortOrder || "desc",
         filters: {
           minPrice,
           maxPrice,
@@ -117,44 +166,53 @@ Examples:
       });
 
       const executionTime = Date.now() - startTime;
-      console.log(`[PropertyFilterSortTool] SQL query completed in ${executionTime}ms, returned ${results.length} results`);
+      console.log(
+        `[PropertyFilterSortTool] SQL query completed in ${executionTime}ms, returned ${results.length} results`,
+      );
 
       // Apply smart response limiting
       const limitedResponse = createLimitedResponse(
         results,
         searchId,
         executionTime,
-        TOOL_RESPONSE_LIMITS
+        TOOL_RESPONSE_LIMITS,
       );
 
-      return JSON.stringify({
-        success: true,
-        ...limitedResponse,
-        searchId,
-        pageInfo,
-        appliedFilters: {
-          sortBy: sortBy || 'combined_score',
-          sortOrder: sortOrder || 'desc',
-          minPrice,
-          maxPrice,
-          minBeds,
-          maxBeds,
-          cities,
-          status,
+      return JSON.stringify(
+        {
+          success: true,
+          ...limitedResponse,
+          searchId,
+          pageInfo,
+          appliedFilters: {
+            sortBy: sortBy || "combined_score",
+            sortOrder: sortOrder || "desc",
+            minPrice,
+            maxPrice,
+            minBeds,
+            maxBeds,
+            cities,
+            status,
+          },
+          source: "elasticsearch",
+          note: `Filtered ${pageInfo.totalItems} properties. Page ${pageInfo.page} of ${pageInfo.totalPages}.`,
         },
-        source: 'elasticsearch',
-        note: `Filtered ${pageInfo.totalItems} properties. Page ${pageInfo.page} of ${pageInfo.totalPages}.`
-      }, null, 2);
-
+        null,
+        2,
+      );
     } catch (error) {
-      console.error('[PropertyFilterSortTool] Error:', error);
+      console.error("[PropertyFilterSortTool] Error:", error);
 
-      return JSON.stringify({
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error',
-        searchId,
-        suggestion: 'Check searchId and try again',
-      }, null, 2);
+      return JSON.stringify(
+        {
+          success: false,
+          error: error instanceof Error ? error.message : "Unknown error",
+          searchId,
+          suggestion: "Check searchId and try again",
+        },
+        null,
+        2,
+      );
     }
   },
 });
@@ -199,31 +257,59 @@ Common MLS fields available:
 - Plus 40+ more MLS fields!`,
 
   schema: z.object({
-    searchId: z.string().describe("UUID of the search result containing the property"),
-    listingKey: z.string().optional().describe("Property's ListingKey for direct lookup (preferred method)"),
-    address: z.string().optional().describe("Property address for fuzzy matching (alternative to listingKey)"),
-    fields: z.array(z.string()).optional().describe("Optional: specific fields to return (e.g., ['YearBuilt', 'PoolYN'])")
+    searchId: z
+      .string()
+      .describe("UUID of the search result containing the property"),
+    listingKey: z
+      .string()
+      .optional()
+      .describe("Property's ListingKey for direct lookup (preferred method)"),
+    address: z
+      .string()
+      .optional()
+      .describe(
+        "Property address for fuzzy matching (alternative to listingKey)",
+      ),
+    fields: z
+      .array(z.string())
+      .optional()
+      .describe(
+        "Optional: specific fields to return (e.g., ['YearBuilt', 'PoolYN'])",
+      ),
   }),
 
   func: async ({ searchId, listingKey, address, fields }, config) => {
-    console.log(`[PropertyGetDetailsTool] Retrieving property for searchId: ${searchId}`);
-    console.log(`[PropertyGetDetailsTool] ListingKey: ${listingKey || 'not provided'}, Address: ${address || 'not provided'}`);
+    console.log(
+      `[PropertyGetDetailsTool] Retrieving property for searchId: ${searchId}`,
+    );
+    console.log(
+      `[PropertyGetDetailsTool] ListingKey: ${listingKey || "not provided"}, Address: ${address || "not provided"}`,
+    );
 
     if (!listingKey && !address) {
-      return JSON.stringify({
-        success: false,
-        error: 'Either listingKey or address must be provided',
-        searchId,
-        suggestion: 'Use property_get_results to see available properties and their ListingKeys'
-      }, null, 2);
+      return JSON.stringify(
+        {
+          success: false,
+          error: "Either listingKey or address must be provided",
+          searchId,
+          suggestion:
+            "Use property_get_results to see available properties and their ListingKeys",
+        },
+        null,
+        2,
+      );
     }
 
     if (!searchId) {
-      return JSON.stringify({
-        success: false,
-        error: 'searchId is required',
-        suggestion: 'Call property_search first to get a searchId',
-      }, null, 2);
+      return JSON.stringify(
+        {
+          success: false,
+          error: "searchId is required",
+          suggestion: "Call property_search first to get a searchId",
+        },
+        null,
+        2,
+      );
     }
 
     try {
@@ -231,7 +317,9 @@ Common MLS fields available:
 
       // Method 1: Direct lookup by listingKey (fast, indexed)
       if (listingKey) {
-        console.log(`[PropertyGetDetailsTool] Direct lookup by listingKey: ${listingKey}`);
+        console.log(
+          `[PropertyGetDetailsTool] Direct lookup by listingKey: ${listingKey}`,
+        );
         property = await getPropertyByListingKey(searchId, listingKey);
 
         if (property) {
@@ -241,7 +329,9 @@ Common MLS fields available:
 
       // Method 2: Fuzzy address search (slower, needs to scan results)
       if (!property && address) {
-        console.log(`[PropertyGetDetailsTool] Searching by address: ${address}`);
+        console.log(
+          `[PropertyGetDetailsTool] Searching by address: ${address}`,
+        );
         const { results } = await getSearchResultsFromDB({
           searchId,
           page: 1,
@@ -249,30 +339,44 @@ Common MLS fields available:
         });
 
         const normalizedAddress = address.toLowerCase().trim();
-        property = results.find((p: any) =>
-          p.address?.toLowerCase().includes(normalizedAddress) ||
-          p.UnparsedAddress?.toLowerCase().includes(normalizedAddress)
+        property = results.find(
+          (p: any) =>
+            p.address?.toLowerCase().includes(normalizedAddress) ||
+            p.UnparsedAddress?.toLowerCase().includes(normalizedAddress),
         );
 
         if (property) {
-          console.log(`[PropertyGetDetailsTool] Found property by address fuzzy match`);
+          console.log(
+            `[PropertyGetDetailsTool] Found property by address fuzzy match`,
+          );
         }
       }
 
       if (!property) {
         // Get sample listing keys for suggestion
-        const { results } = await getSearchResultsFromDB({ searchId, page: 1, pageSize: 5 });
-        const sampleKeys = results.map((p: any) => p.listingKey).filter(Boolean);
-
-        return JSON.stringify({
-          success: false,
-          error: listingKey
-            ? `Property not found with ListingKey: ${listingKey}`
-            : `Property not found matching address: ${address}`,
+        const { results } = await getSearchResultsFromDB({
           searchId,
-          availableListings: sampleKeys,
-          suggestion: 'Use property_filter_sort to see all available properties'
-        }, null, 2);
+          page: 1,
+          pageSize: 5,
+        });
+        const sampleKeys = results
+          .map((p: any) => p.listingKey)
+          .filter(Boolean);
+
+        return JSON.stringify(
+          {
+            success: false,
+            error: listingKey
+              ? `Property not found with ListingKey: ${listingKey}`
+              : `Property not found matching address: ${address}`,
+            searchId,
+            availableListings: sampleKeys,
+            suggestion:
+              "Use property_filter_sort to see all available properties",
+          },
+          null,
+          2,
+        );
       }
 
       // Filter to specific fields if requested
@@ -286,26 +390,34 @@ Common MLS fields available:
         }, {});
       }
 
-      return JSON.stringify({
-        success: true,
-        property: propertyData,
-        searchId,
-        source: 'elasticsearch',
-        fieldsReturned: fields || 'all',
-        note: fields && fields.length > 0
-          ? `Returned ${fields.length} requested fields`
-          : 'Full property details returned'
-      }, null, 2);
-
+      return JSON.stringify(
+        {
+          success: true,
+          property: propertyData,
+          searchId,
+          source: "elasticsearch",
+          fieldsReturned: fields || "all",
+          note:
+            fields && fields.length > 0
+              ? `Returned ${fields.length} requested fields`
+              : "Full property details returned",
+        },
+        null,
+        2,
+      );
     } catch (error) {
-      console.error('[PropertyGetDetailsTool] Error:', error);
+      console.error("[PropertyGetDetailsTool] Error:", error);
 
-      return JSON.stringify({
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error',
-        searchId,
-        suggestion: 'Check searchId and try again'
-      }, null, 2);
+      return JSON.stringify(
+        {
+          success: false,
+          error: error instanceof Error ? error.message : "Unknown error",
+          searchId,
+          suggestion: "Check searchId and try again",
+        },
+        null,
+        2,
+      );
     }
   },
 });
@@ -343,18 +455,27 @@ Frontend always has access to full property data via the same searchId.`,
   schema: z.object({
     searchId: z.string().describe("UUID of the search result to retrieve"),
     page: z.number().optional().describe("Page number (default: 1)"),
-    pageSize: z.number().optional().describe("Results per page (default: 20, max: 100)")
+    pageSize: z
+      .number()
+      .optional()
+      .describe("Results per page (default: 20, max: 100)"),
   }),
 
   func: async ({ searchId, page, pageSize }, config) => {
-    console.log(`[PropertyGetResultsTool] Retrieving searchId: ${searchId}, page: ${page || 1}`);
+    console.log(
+      `[PropertyGetResultsTool] Retrieving searchId: ${searchId}, page: ${page || 1}`,
+    );
 
     if (!searchId) {
-      return JSON.stringify({
-        success: false,
-        error: 'searchId is required',
-        suggestion: 'Call property_search first to get a searchId',
-      }, null, 2);
+      return JSON.stringify(
+        {
+          success: false,
+          error: "searchId is required",
+          suggestion: "Call property_search first to get a searchId",
+        },
+        null,
+        2,
+      );
     }
 
     try {
@@ -368,45 +489,59 @@ Frontend always has access to full property data via the same searchId.`,
       const metadata = await getSearchMetadata(searchId);
 
       if (results.length === 0 && !metadata) {
-        return JSON.stringify({
-          success: false,
-          error: 'Search result not found',
-          searchId,
-          suggestion: 'The searchId may have expired. Run a new property_search.',
-        }, null, 2);
+        return JSON.stringify(
+          {
+            success: false,
+            error: "Search result not found",
+            searchId,
+            suggestion:
+              "The searchId may have expired. Run a new property_search.",
+          },
+          null,
+          2,
+        );
       }
 
-      console.log(`[PropertyGetResultsTool] Found ${results.length} results (page ${pageInfo.page} of ${pageInfo.totalPages})`);
+      console.log(
+        `[PropertyGetResultsTool] Found ${results.length} results (page ${pageInfo.page} of ${pageInfo.totalPages})`,
+      );
 
       // Apply smart response limiting
       const limitedResponse = createLimitedResponse(
         results,
         searchId,
         0,
-        TOOL_RESPONSE_LIMITS
+        TOOL_RESPONSE_LIMITS,
       );
 
-      return JSON.stringify({
-        success: true,
-        ...limitedResponse,
-        searchId,
-        query: metadata?.queryText || 'Unknown query',
-        totalCount: pageInfo.totalItems,
-        pageInfo,
-        hasMore: pageInfo.page < pageInfo.totalPages,
-        source: 'elasticsearch',
-        createdAt: metadata?.createdAt,
-      }, null, 2);
-
+      return JSON.stringify(
+        {
+          success: true,
+          ...limitedResponse,
+          searchId,
+          query: metadata?.queryText || "Unknown query",
+          totalCount: pageInfo.totalItems,
+          pageInfo,
+          hasMore: pageInfo.page < pageInfo.totalPages,
+          source: "elasticsearch",
+          createdAt: metadata?.createdAt,
+        },
+        null,
+        2,
+      );
     } catch (error) {
-      console.error('[PropertyGetResultsTool] Error:', error);
+      console.error("[PropertyGetResultsTool] Error:", error);
 
-      return JSON.stringify({
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error',
-        searchId,
-        suggestion: 'Check searchId and try again',
-      }, null, 2);
+      return JSON.stringify(
+        {
+          success: false,
+          error: error instanceof Error ? error.message : "Unknown error",
+          searchId,
+          suggestion: "Check searchId and try again",
+        },
+        null,
+        2,
+      );
     }
   },
 });

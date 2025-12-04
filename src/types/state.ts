@@ -1,5 +1,6 @@
 import { Annotation } from "@langchain/langgraph";
 import { BaseMessage } from "@langchain/core/messages";
+import { PlatformContext, DEFAULT_PLATFORM_CONTEXT } from "./platform.js";
 
 /**
  * User Context for personalization
@@ -150,6 +151,16 @@ export const AgentState = Annotation.Root({
   userContext: Annotation<UserContext>({
     reducer: (existing, incoming) => ({ ...existing, ...incoming }),
     default: () => ({ isAuthenticated: false }),
+  }),
+
+  /**
+   * Platform context for platform-aware behavior
+   * Contains capabilities, formatting rules, and tool configuration
+   * Used to adapt responses for different platforms (web, whatsapp)
+   */
+  platformContext: Annotation<PlatformContext>({
+    reducer: (existing, incoming) => ({ ...existing, ...incoming }),
+    default: () => DEFAULT_PLATFORM_CONTEXT,
   }),
 });
 
