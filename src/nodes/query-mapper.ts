@@ -2,6 +2,7 @@ import { AIMessage, HumanMessage, SystemMessage } from "@langchain/core/messages
 import { AgentStateType } from "../types/state.js";
 import { ChatOpenAI } from "@langchain/openai";
 import { z } from "zod";
+import { sharedPublisher } from '../pubsub/shared.js';
 
 /**
  * MappedQuery Schema - Compatible with hybrid-search script
@@ -293,6 +294,17 @@ Note: "2-bedroom" = EXACTLY 2 bedrooms → minBeds: 2, maxBeds: 2. NOT minBeds: 
       new SystemMessage({ content: systemPrompt }),
       new HumanMessage({ content: `Parse this query: "${userQuery}"` }),
     ];
+
+    // Publish progress update before calling LLM
+    const { sessionId, userId, correlationId } = state.metadata || {};
+    if (sessionId) {
+      await sharedPublisher.publishProgressUpdate({
+        sessionId,
+        userId,
+        correlationId,
+        status: 'Analyzing your search query...'
+      });
+    }
 
     console.log('[QueryMapper] Calling LLM to parse query...');
     const llmStart = Date.now();

@@ -2,6 +2,7 @@ import { AgentStateType } from '../types/state.js';
 import { SearchResult } from './search-executor.js';
 import { saveSearchResults, SearchSummary, initializeSearchResultsTables } from '../subgraphs/property-search/db/search-results.js';
 import { MappedQuery } from '../subgraphs/property-search/types/mapped-query.js';
+import { sharedPublisher } from '../pubsub/shared.js';
 
 // Track if tables have been initialized
 let tablesInitialized = false;
@@ -28,6 +29,17 @@ export interface ResultSaverOutput {
  */
 export async function resultSaverNode(state: AgentStateType): Promise<Partial<AgentStateType>> {
   console.log('\n[ResultSaver] Persisting search results...');
+
+  // Publish progress update
+  const { sessionId, userId, correlationId } = state.metadata || {};
+  if (sessionId) {
+    await sharedPublisher.publishProgressUpdate({
+      sessionId,
+      userId,
+      correlationId,
+      status: 'Saving search results...'
+    });
+  }
 
   // Initialize tables on first run
   if (!tablesInitialized) {

@@ -2,6 +2,7 @@ import { AIMessage, HumanMessage, SystemMessage } from "@langchain/core/messages
 import { AgentStateType } from "../types/state.js";
 import { createResponseModel } from "../models/openai.js";
 import { uiEventPublisher } from "../pubsub/ui-event-publisher.js";
+import { sharedPublisher } from "../pubsub/shared.js";
 import { getPlatformContext, shouldPublishUIEvents } from "../utils/platformContext.js";
 import { buildFormattingInstructions, adaptMarkdown, truncateResponse } from "../utils/formatters.js";
 
@@ -18,6 +19,17 @@ import { buildFormattingInstructions, adaptMarkdown, truncateResponse } from "..
  */
 export async function searchResponseGeneratorNode(state: AgentStateType): Promise<Partial<AgentStateType>> {
   console.log('\n[SearchResponseGenerator] Generating final response...');
+
+  // Publish progress update
+  const { sessionId, userId: metaUserId, correlationId } = state.metadata || {};
+  if (sessionId) {
+    await sharedPublisher.publishProgressUpdate({
+      sessionId,
+      userId: metaUserId,
+      correlationId,
+      status: 'Generating response...'
+    });
+  }
 
   const userContext = state.userContext || { isAuthenticated: false };
   const userName = userContext.fullName || 'there';

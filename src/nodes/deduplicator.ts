@@ -1,5 +1,6 @@
 import { AgentStateType } from '../types/state.js';
 import { SearchResult } from './search-executor.js';
+import { sharedPublisher } from '../pubsub/shared.js';
 
 /**
  * Deduplication Priority:
@@ -74,6 +75,17 @@ function normalizeAddress(address: string | undefined): string {
  */
 export async function deduplicatorNode(state: AgentStateType): Promise<Partial<AgentStateType>> {
   console.log('\n[Deduplicator] Processing search results...');
+
+  // Publish progress update
+  const { sessionId, userId, correlationId } = state.metadata || {};
+  if (sessionId) {
+    await sharedPublisher.publishProgressUpdate({
+      sessionId,
+      userId,
+      correlationId,
+      status: 'Removing duplicate properties...'
+    });
+  }
 
   const searchResults = state.toolResults?.searchResults as SearchResult[] | undefined;
 

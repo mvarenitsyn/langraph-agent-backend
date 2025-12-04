@@ -2,6 +2,7 @@ import { Client } from '@elastic/elasticsearch';
 import { Pool } from 'pg';
 import { AgentStateType } from '../types/state.js';
 import { MappedQuery } from '../subgraphs/property-search/types/mapped-query.js';
+import { sharedPublisher } from '../pubsub/shared.js';
 
 // ES client
 const esClient = new Client({
@@ -495,6 +496,17 @@ export async function searchExecutorNode(state: AgentStateType): Promise<Partial
   try {
     const filters = convertToFilters(mappedQuery);
     console.log('[SearchExecutor] Filters:', JSON.stringify(filters, null, 2));
+
+    // Publish progress update before searching
+    const { sessionId, userId, correlationId } = state.metadata || {};
+    if (sessionId) {
+      await sharedPublisher.publishProgressUpdate({
+        sessionId,
+        userId,
+        correlationId,
+        status: 'Searching for matching properties...'
+      });
+    }
 
     // Stage 1: Location search
     const locStart = Date.now();
