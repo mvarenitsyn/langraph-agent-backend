@@ -169,7 +169,7 @@ export function formatSearchSummary(
   searchToken: string,
   platformContext: PlatformContext
 ): string {
-  const baseUrl = 'https://www.myvista.co/search';
+  const baseUrl = process.env.FRONTEND_URL || process.env.NEXT_PUBLIC_FRONTEND_URL || 'https://realvista.com/search';
   const searchUrl = `${baseUrl}/${searchToken}`;
 
   if (platformContext.platform === 'whatsapp') {
