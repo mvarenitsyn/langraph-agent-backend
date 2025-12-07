@@ -51,6 +51,9 @@ export interface SearchResult {
   latitude?: number;
   longitude?: number;
   photoUrl?: string;
+  // Frontend compatibility fields (added for UI image display)
+  Media?: string[];  // Array format expected by frontend PropertySummary
+  image?: string;    // Convenience field for quick access
   // Listing agent info (from raw_data JSONB)
   listAgentFullName?: string;
   listAgentMlsId?: string;
@@ -466,6 +469,9 @@ async function fetchProperties(
         // PERFORMANCE: These fields removed from query (90% faster without JSONB extraction)
         // Use property_get_full_details tool to fetch on-demand
         photoUrl: undefined,
+        // Frontend compatibility fields
+        Media: [],  // Empty - images fetched on-demand
+        image: undefined,
         listAgentFullName: undefined,
         listAgentMlsId: undefined,
         listOfficeName: undefined,

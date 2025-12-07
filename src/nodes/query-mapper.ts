@@ -312,6 +312,34 @@ Note: "2-bedroom" = EXACTLY 2 bedrooms → minBeds: 2, maxBeds: 2. NOT minBeds: 
     const llmElapsed = Date.now() - llmStart;
     console.log(`[QueryMapper] ⏱️  LLM Response Time: ${llmElapsed}ms`);
 
+    // POST-PROCESS: Fix common city name variations
+    // This is more reliable than relying on LLM to follow instructions
+    const cityNameCorrections: Record<string, string> = {
+      'Hallandale': 'Hallandale Beach',
+      'Sunny Isles': 'Sunny Isles Beach',
+      'Pompano': 'Pompano Beach',
+      'Deerfield': 'Deerfield Beach',
+      'Delray': 'Delray Beach',
+      'Boynton': 'Boynton Beach',
+      'Boca': 'Boca Raton',
+      'Ft Lauderdale': 'Fort Lauderdale',
+      'Ft. Lauderdale': 'Fort Lauderdale',
+      'W Palm Beach': 'West Palm Beach',
+      'WPB': 'West Palm Beach',
+      'PBG': 'Palm Beach Gardens',
+    };
+
+    if (rawMappedQuery.location.cities && rawMappedQuery.location.cities.length > 0) {
+      rawMappedQuery.location.cities = rawMappedQuery.location.cities.map(city => {
+        const corrected = cityNameCorrections[city];
+        if (corrected) {
+          console.log(`[QueryMapper] ✓ Auto-corrected city: "${city}" → "${corrected}"`);
+          return corrected;
+        }
+        return city;
+      });
+    }
+
     // Normalize output: convert 0 → null for numbers, false → null for booleans
     // IMPORTANT: Default status to "Active" if not specified by user
     const mappedQuery: MappedQuery = {

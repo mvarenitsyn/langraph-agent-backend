@@ -3,6 +3,8 @@ import { SearchResult } from './search-executor.js';
 import { saveSearchResults, SearchSummary, initializeSearchResultsTables } from '../subgraphs/property-search/db/search-results.js';
 import { MappedQuery } from '../subgraphs/property-search/types/mapped-query.js';
 import { sharedPublisher } from '../pubsub/shared.js';
+import { uiEventPublisher } from '../pubsub/ui-event-publisher.js';
+import { getPlatformContext, shouldPublishUIEvents } from '../utils/platformContext.js';
 
 // Track if tables have been initialized
 let tablesInitialized = false;
@@ -102,6 +104,30 @@ export async function resultSaverNode(state: AgentStateType): Promise<Partial<Ag
     });
 
     console.log(`[ResultSaver] Saved ${searchResults.length} results with searchId: ${searchId}`);
+
+    // ⚡ IMMEDIATE UI UPDATE: Publish searchId to frontend right after save
+    // This allows frontend to fetch and display properties while response is being generated
+    const platformContext = getPlatformContext(state);
+    if (searchId && summary.total > 0 && shouldPublishUIEvents(platformContext)) {
+      try {
+        console.log(`[ResultSaver] 📡 Publishing searchId to frontend IMMEDIATELY (${summary.total} properties)`);
+
+        await uiEventPublisher.publishSearchResults({
+          searchId,
+          totalCount: summary.total,
+          searchToken: searchId, // Use searchId as token
+          mapLink: '', // Optional map link
+          sessionId: state.metadata?.sessionId || 'unknown',
+          userId: state.metadata?.userId,
+          correlationId: state.metadata?.correlationId || state.metadata?.sessionId || 'unknown',
+        });
+
+        console.log('[ResultSaver] ✅ searchId published - frontend can now fetch properties');
+      } catch (error) {
+        console.error('[ResultSaver] ⚠️  Failed to publish searchId (non-critical):', error);
+        // Don't fail the search if UI event publishing fails
+      }
+    }
 
     // Calculate page info
     const pageSize = 20;

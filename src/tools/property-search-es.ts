@@ -12,7 +12,11 @@
 
 import { DynamicStructuredTool } from "@langchain/core/tools";
 import { z } from "zod";
-import { invokePropertySearch } from "../subgraphs/property-search/invoke.js";
+
+/**
+ * NOTE: This tool now uses the graph's decomposed property search pipeline
+ * instead of the old subgraph invoke pattern.
+ */
 
 /**
  * Property Search Tool (ES-based)
@@ -60,146 +64,16 @@ Examples:
   }),
 
   func: async ({ query }, config) => {
-    console.log(`[PropertySearchES] Searching: "${query}"`);
+    console.log(`[PropertySearchES] DEPRECATED: This tool should not be called.`);
+    console.log(`[PropertySearchES] Use: router → query_mapper → search_executor → deduplicator → result_saver → search_response_generator`);
 
-    // Extract sessionId, userId, and userContext from config metadata
-    const sessionId = (config as any)?.metadata?.sessionId;
-    const userId = (config as any)?.metadata?.userId;
-    const userContext = (config as any)?.metadata?.userContext || {
-      isAuthenticated: false,
-    };
-    const correlationId = (config as any)?.metadata?.correlationId;
-
-    const userName = userContext.fullName || "Guest";
-    const isAuthenticated = userContext.isAuthenticated || false;
-
-    console.log(
-      `[PropertySearchES] User: ${userName} (authenticated=${isAuthenticated})`,
-    );
-    console.log(`[PropertySearchES] SessionId: ${sessionId || "none"}`);
-    console.log(`[PropertySearchES] UserId: ${userId || "none"}`);
-
-    // Generate threadId for database persistence
-    const threadId = sessionId || correlationId || `search-${Date.now()}`;
-
-    try {
-      // Invoke the ES subgraph
-      const result = await invokePropertySearch(query, {
-        threadId,
-        userId,
-        sessionId,
-        correlationId,
-      });
-
-      // Handle errors
-      if (result.error) {
-        console.error(`[PropertySearchES] Search error: ${result.error}`);
-        return JSON.stringify(
-          {
-            success: false,
-            summary: `Search failed: ${result.error}. Try simplifying your search criteria.`,
-            totalCount: 0,
-            searchId: null,
-            mapLink: null,
-            error: result.error,
-          },
-          null,
-          2,
-        );
-      }
-
-      // Build summary message
-      const summary = result.summary;
-      const parts: string[] = [];
-
-      if (result.totalCount === 0) {
-        parts.push(
-          `No properties found matching "${query}". Try adjusting your search criteria.`,
-        );
-      } else {
-        parts.push(
-          `Found ${result.totalCount} ${result.totalCount === 1 ? "property" : "properties"} matching "${query}".`,
-        );
-
-        // Add duplicates removed info if any
-        if (summary.duplicatesRemoved > 0) {
-          parts.push(
-            `(${summary.duplicatesRemoved} duplicate listings removed)`,
-          );
-        }
-
-        // Add top cities
-        if (summary.topCities && summary.topCities.length > 0) {
-          parts.push(`\nTop cities: ${summary.topCities.join(", ")}`);
-        }
-
-        // Add price range
-        if (
-          summary.priceRange &&
-          summary.priceRange.min !== null &&
-          summary.priceRange.max !== null
-        ) {
-          const minPrice = summary.priceRange.min.toLocaleString();
-          const maxPrice = summary.priceRange.max.toLocaleString();
-          parts.push(`Price range: $${minPrice} - $${maxPrice}`);
-        }
-
-        // Add bedroom range
-        if (
-          summary.bedroomRange &&
-          summary.bedroomRange.min !== null &&
-          summary.bedroomRange.max !== null
-        ) {
-          parts.push(
-            `Bedrooms: ${summary.bedroomRange.min} - ${summary.bedroomRange.max}`,
-          );
-        }
-
-        parts.push(`\n(Properties are now displayed on the interactive map)`);
-      }
-
-      console.log(
-        `[PropertySearchES] ✓ Search completed with ${result.totalCount} results, searchId: ${result.searchId}`,
-      );
-
-      return JSON.stringify(
-        {
-          success: true,
-          summary: parts.join("\n"),
-          totalCount: result.totalCount,
-          searchId: result.searchId,
-          pageInfo: result.pageInfo,
-          mapLink: result.searchId
-            ? `Properties are now displayed on the interactive map (searchId: ${result.searchId})`
-            : null,
-          queryMetadata: {
-            original: query,
-            queryType: "elasticsearch_hybrid",
-            intent: null, // ES search doesn't extract intent like backend
-          },
-        },
-        null,
-        2,
-      );
-    } catch (error) {
-      console.error("[PropertySearchES] Error:", error);
-
-      const errorMessage =
-        error instanceof Error ? error.message : "Unknown error";
-
-      return JSON.stringify(
-        {
-          success: false,
-          summary: `Search failed: ${errorMessage}. Please try again or contact support if the issue persists.`,
-          totalCount: 0,
-          searchId: null,
-          mapLink: null,
-          error: errorMessage,
-        },
-        null,
-        2,
-      );
-    }
+    return JSON.stringify({
+      success: false,
+      summary: 'This search tool is deprecated. Searches are now handled through the decomposed graph pipeline.',
+      totalCount: 0,
+      searchId: null,
+      error: 'Tool deprecated - use graph pipeline'
+    }, null, 2);
   },
 });
 

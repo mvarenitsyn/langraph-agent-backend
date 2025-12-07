@@ -1,5 +1,5 @@
 import { Pool } from 'pg';
-import { SearchResult } from '../nodes/search-executor.js';
+import { SearchResult } from '../../../nodes/search-executor.js';
 
 // Use the property_search database for search results persistence
 const pool = new Pool({

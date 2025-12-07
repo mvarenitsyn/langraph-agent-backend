@@ -135,38 +135,10 @@ ${summary.bedroomRange?.min && summary.bedroomRange?.max ? `- Bedrooms: ${summar
       console.log(`[SearchResponseGenerator] Response adapted for ${platformContext.platform} (${finalResponse.length} chars)`);
     }
 
-    // Publish UI render event if we have search results (only for platforms that support UI)
-    if (searchId && totalCount > 0 && shouldPublishUIEvents(platformContext)) {
-      try {
-        console.log(`[SearchResponseGenerator] Publishing UI render event for ${totalCount} properties`);
-
-        // Build result object for UI event
-        const resultForUI = {
-          success: true,
-          totalCount,
-          searchId,
-          searchToken: searchId, // Use searchId as token for now
-          mapLink: '', // Optional map link
-        };
-
-        await uiEventPublisher.publishSearchResults({
-          searchId: resultForUI.searchId,
-          totalCount: resultForUI.totalCount,
-          searchToken: resultForUI.searchToken,
-          mapLink: resultForUI.mapLink,
-          sessionId: state.metadata?.sessionId || 'unknown',
-          userId: state.metadata?.userId,
-          correlationId: state.metadata?.correlationId || state.metadata?.sessionId || 'unknown',
-        });
-
-        console.log('[SearchResponseGenerator] ✓ UI render event published');
-      } catch (error) {
-        console.error('[SearchResponseGenerator] Failed to publish UI render event:', error);
-        // Don't fail the request if UI event publishing fails
-      }
-    } else if (searchId && totalCount > 0) {
-      console.log('[SearchResponseGenerator] Skipping UI render event for non-web platform');
-    }
+    // NOTE: UI render event now published in result_saver node for immediate frontend updates
+    // This allows frontend to fetch properties while response is being generated
+    // Keeping this comment for clarity - the publish call was moved to result_saver.ts line 115
+    console.log('[SearchResponseGenerator] UI event already published by result_saver node');
 
     return {
       finalResponse,
