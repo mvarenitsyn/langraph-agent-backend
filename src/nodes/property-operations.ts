@@ -130,6 +130,13 @@ export async function propertyOperationsNode(state: AgentStateType): Promise<Par
       console.log(`[PropertyOperations] ✓ SearchId available: ${searchId}`);
     }
 
+    // Get current property context from metadata (if frontend sends it)
+    const currentListingKey = state.metadata?.currentListingKey as string | undefined;
+    const currentPropertyAddress = state.metadata?.currentPropertyAddress as string | undefined;
+    if (currentListingKey) {
+      console.log(`[PropertyOperations] ✓ Current property context: ${currentListingKey} (${currentPropertyAddress || 'unknown address'})`);
+    }
+
     // Wrap each tool to inject searchId
     const wrappedTools = [
       // Wrap filter/sort tool
@@ -388,6 +395,12 @@ The UI will automatically render based on tool results:
 - property_get_results → Displays property list on map/listview
 - property_get_details → Opens property details modal
 - cma_generate → Displays CMA report with valuation details
+${currentListingKey ? `
+**Currently Viewing Property:**
+- ListingKey: ${currentListingKey}
+- Address: ${currentPropertyAddress || 'Unknown'}
+When the user refers to "this property", "the current property", or similar, use ListingKey: ${currentListingKey}
+` : ''}
 `;
 
     // Start fresh without conversation history to avoid OpenAI tool message errors
@@ -596,6 +609,7 @@ async function publishUIEventsForTools(toolResults: Record<string, any>, state: 
       // property_filter_sort → filtered_results
       if (toolName === 'property_filter_sort' && result.count !== undefined && result.searchId) {
         console.log(`[PropertyOperations] Publishing filtered_results event for ${result.count} properties`);
+        console.log(`[PropertyOperations] Applied filters:`, result.appliedFilters);
 
         await uiEventPublisher.publishUIEvent({
           renderType: 'filtered_results',
@@ -603,13 +617,14 @@ async function publishUIEventsForTools(toolResults: Record<string, any>, state: 
             searchId: result.searchId,
             totalCount: result.count,
             filterType: 'custom',
+            appliedFilters: result.appliedFilters,  // Include filter criteria for frontend to use
           },
           sessionId,
           userId,
           correlationId,
         });
 
-        console.log('[PropertyOperations] ✓ filtered_results event published');
+        console.log('[PropertyOperations] ✓ filtered_results event published with appliedFilters');
       }
 
       // property_get_results → search_results (only if count > 0)
