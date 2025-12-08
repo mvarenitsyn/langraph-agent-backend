@@ -1,6 +1,10 @@
 import { StateGraph, START, END } from "@langchain/langgraph";
 import { AgentState } from "../types/state.js";
 import { routerNode } from "../nodes/router.js";
+// Task orchestration nodes
+import { taskExecutorNode } from "../nodes/task-executor.js";
+import { taskCompleteNode } from "../nodes/task-complete.js";
+import { responseSynthesizerNode } from "../nodes/response-synthesizer.js";
 // Decomposed property search nodes (replaces property-search.js)
 import { queryMapperNode } from "../nodes/query-mapper.js";
 import { searchExecutorNode } from "../nodes/search-executor.js";
@@ -22,43 +26,65 @@ import { initializeTools } from "../tools/index.js";
 initializeTools();
 
 /**
- * OPTIMIZED LangGraph Agent - Decomposed Property Search Pipeline
+ * OPTIMIZED LangGraph Agent - Task List Orchestration
  *
- * Graph structure:
+ * Graph structure (Unified Task Path):
  * START → router → [conditional:
- *   - If property query → query_mapper → search_executor → deduplicator → result_saver → search_response_generator → END
- *   - If filter/sort query → property_filter_sort → END (LEGACY - being deprecated)
- *   - If property operations → property_operations → END (includes CMA)
- *   - If research query → perplexity_search → END
- *   - If collections query → collections → END (NEW)
- *   - If showings query → showings → END (NEW)
- *   - If commissions query → commissions → END (NEW)
- *   - Otherwise → END (router generated response)
+ *   - If conversational → END (router generated response)
+ *   - If task-based → task_executor → [route_node] → task_complete → [conditional:
+ *       - If more tasks → task_executor (loop)
+ *       - If all done → response_synthesizer → END
+ *     ]
  * ]
  *
- * Key optimizations:
- * - Property search decomposed into 5 sequential nodes (eliminates subgraph overhead)
- *   1. query_mapper: Parse natural language query with GPT-5.1
- *   2. search_executor: Execute Elasticsearch + PostgreSQL hybrid search
- *   3. deduplicator: Remove duplicate listings by address
- *   4. result_saver: Persist results to database with searchId
- *   5. search_response_generator: Generate user-friendly response and publish UI events
- * - Router uses LLM to decide: generate response OR route to specialized pipelines
- * - property_filter_sort: Filter/sort existing search results with tool loop (LEGACY)
- * - property_operations: Multi-tool agent (filter, get_results, get_details, CMA) with flexible execution
- * - perplexity_search: Web research with tool loop
- * - collections: Property collections management (create, list, add, share)
- * - showings: Property showing scheduling and management
- * - commissions: Commission information requests and tracking
- * - Each pipeline generates its own final response
- * - NO LOOPS at graph level, only within specialized nodes
+ * Route nodes (executed via task_executor):
+ * - PROPERTY_SEARCH → query_mapper → search_executor → deduplicator → result_saver → search_response_generator
+ * - PROPERTY_OPERATIONS → property_operations
+ * - PROPERTY_FILTER → property_filter_sort (LEGACY)
+ * - PERPLEXITY_SEARCH → perplexity_search
+ * - COLLECTIONS → collections
+ * - SHOWINGS → showings
+ * - COMMISSIONS → commissions
+ *
+ * Key features:
+ * - ALL task-based queries (even single-step) go through task_executor
+ * - Only conversational messages bypass task flow
+ * - Multi-step workflows execute sequentially with progress updates
+ * - Response synthesizer combines results from all tasks
+ * - Context-aware: router knows about active search sessions (searchId)
+ * - Failure handling: abort entire task list on error
  */
 
 /**
- * Simple routing function from router node
- * Routes based on metadata flags set by router
+ * Routing function from router node
+ * Routes to task_executor if task list exists, otherwise END
  */
 function routeAfterRouter(state: typeof AgentState.State) {
+  const shouldUseTaskExecutor = state.metadata?.shouldUseTaskExecutor || false;
+
+  if (shouldUseTaskExecutor) {
+    console.log(`[Graph] Router generated task list - routing to task_executor`);
+    return "task_executor";
+  }
+
+  // Conversational - router already generated response
+  console.log(`[Graph] Router generated conversational response - going to END`);
+  return END;
+}
+
+/**
+ * Routing function from task_executor
+ * Routes to appropriate route node based on current task
+ */
+function routeFromTaskExecutor(state: typeof AgentState.State) {
+  const allTasksComplete = state.metadata?.allTasksComplete || false;
+
+  if (allTasksComplete) {
+    console.log(`[Graph] All tasks complete - routing to response_synthesizer`);
+    return "response_synthesizer";
+  }
+
+  // Route based on task executor's routing flags
   const shouldSearchProperties = state.metadata?.shouldSearchProperties || false;
   const shouldFilterProperties = state.metadata?.shouldFilterProperties || false;
   const shouldUsePropertyOperations = state.metadata?.shouldUsePropertyOperations || false;
@@ -68,54 +94,82 @@ function routeAfterRouter(state: typeof AgentState.State) {
   const shouldUseCommissions = state.metadata?.shouldUseCommissions || false;
 
   if (shouldSearchProperties) {
-    console.log(`[Graph] Routing to query_mapper (decomposed property search pipeline)`);
+    console.log(`[Graph] Task executor routing to query_mapper (property search)`);
     return "query_mapper";
   }
 
   if (shouldUsePropertyOperations) {
-    console.log(`[Graph] Routing to property_operations`);
+    console.log(`[Graph] Task executor routing to property_operations`);
     return "property_operations";
   }
 
   if (shouldFilterProperties) {
-    console.log(`[Graph] Routing to property_filter_sort (legacy)`);
+    console.log(`[Graph] Task executor routing to property_filter_sort (legacy)`);
     return "property_filter_sort";
   }
 
   if (shouldSearchPerplexity) {
-    console.log(`[Graph] Routing to perplexity_search`);
+    console.log(`[Graph] Task executor routing to perplexity_search`);
     return "perplexity_search";
   }
 
   if (shouldUseCollections) {
-    console.log(`[Graph] Routing to collections`);
+    console.log(`[Graph] Task executor routing to collections`);
     return "collections";
   }
 
   if (shouldUseShowings) {
-    console.log(`[Graph] Routing to showings`);
+    console.log(`[Graph] Task executor routing to showings`);
     return "showings";
   }
 
   if (shouldUseCommissions) {
-    console.log(`[Graph] Routing to commissions`);
+    console.log(`[Graph] Task executor routing to commissions`);
     return "commissions";
   }
 
-  // Router already generated response - go to END
-  console.log(`[Graph] Router generated response - going to END`);
-  return END;
+  // Fallback - should not happen
+  console.log(`[Graph] Task executor - no routing flag set, going to response_synthesizer`);
+  return "response_synthesizer";
+}
+
+/**
+ * Routing function after task_complete
+ * Loops back to task_executor if more tasks, otherwise to response_synthesizer
+ */
+function routeAfterTaskComplete(state: typeof AgentState.State) {
+  const hasMoreTasks = state.metadata?.hasMoreTasks || false;
+  const taskFailed = state.metadata?.taskFailed || false;
+
+  if (taskFailed) {
+    // Task failed - go to response synthesizer to generate error response
+    console.log(`[Graph] Task failed - routing to response_synthesizer for error handling`);
+    return "response_synthesizer";
+  }
+
+  if (hasMoreTasks) {
+    console.log(`[Graph] More tasks remaining - routing back to task_executor`);
+    return "task_executor";
+  }
+
+  console.log(`[Graph] All tasks complete - routing to response_synthesizer`);
+  return "response_synthesizer";
 }
 
 export async function createAgentGraph() {
-  console.log('[Graph] Building ultra-simplified LangGraph agent...');
+  console.log('[Graph] Building task-orchestrated LangGraph agent...');
 
-  // Create the state graph - NO TOOL LOOP AT GRAPH LEVEL
+  // Create the state graph with task orchestration
   const workflow = new StateGraph(AgentState)
-    // Router node
+    // Router node - generates task list or conversational response
     .addNode("router", routerNode)
 
-    // Property search pipeline (5 sequential nodes - decomposed from subgraph)
+    // Task orchestration nodes
+    .addNode("task_executor", taskExecutorNode)
+    .addNode("task_complete", taskCompleteNode)
+    .addNode("response_synthesizer", responseSynthesizerNode)
+
+    // Property search pipeline (5 sequential nodes)
     .addNode("query_mapper", queryMapperNode)
     .addNode("search_executor", searchExecutorNode)
     .addNode("deduplicator", deduplicatorNode)
@@ -130,30 +184,58 @@ export async function createAgentGraph() {
     .addNode("showings", showingsNode)
     .addNode("commissions", commissionsNode)
 
-    // Add edges
+    // ========== EDGES ==========
+
+    // START → router
     .addEdge(START, "router")
 
-    // Conditional edge from router: all specialized pipelines or END
+    // Router → task_executor (if task list) OR END (if conversational)
     .addConditionalEdges(
       "router",
       routeAfterRouter,
-      ["query_mapper", "property_filter_sort", "property_operations", "perplexity_search", "collections", "showings", "commissions", END]
+      ["task_executor", END]
     )
 
-    // Property search pipeline: sequential chain
+    // Task executor → route nodes OR response_synthesizer (if all complete)
+    .addConditionalEdges(
+      "task_executor",
+      routeFromTaskExecutor,
+      [
+        "query_mapper",
+        "property_filter_sort",
+        "property_operations",
+        "perplexity_search",
+        "collections",
+        "showings",
+        "commissions",
+        "response_synthesizer",
+      ]
+    )
+
+    // Property search pipeline: sequential chain → task_complete
     .addEdge("query_mapper", "search_executor")
     .addEdge("search_executor", "deduplicator")
     .addEdge("deduplicator", "result_saver")
     .addEdge("result_saver", "search_response_generator")
-    .addEdge("search_response_generator", END)
+    .addEdge("search_response_generator", "task_complete")
 
-    // After other specialized nodes, go to END (they generate their own responses)
-    .addEdge("property_filter_sort", END)
-    .addEdge("property_operations", END)
-    .addEdge("perplexity_search", END)
-    .addEdge("collections", END)
-    .addEdge("showings", END)
-    .addEdge("commissions", END);
+    // All other route nodes → task_complete
+    .addEdge("property_filter_sort", "task_complete")
+    .addEdge("property_operations", "task_complete")
+    .addEdge("perplexity_search", "task_complete")
+    .addEdge("collections", "task_complete")
+    .addEdge("showings", "task_complete")
+    .addEdge("commissions", "task_complete")
+
+    // Task complete → task_executor (loop) OR response_synthesizer
+    .addConditionalEdges(
+      "task_complete",
+      routeAfterTaskComplete,
+      ["task_executor", "response_synthesizer"]
+    )
+
+    // Response synthesizer → END
+    .addEdge("response_synthesizer", END);
 
   // Initialize checkpointer
   const checkpointer = await createCheckpointer();
@@ -163,7 +245,9 @@ export async function createAgentGraph() {
     checkpointer,
   });
 
-  console.log(`[Graph] ✓ Optimized agent graph compiled with 12 nodes (router + 5-node property search pipeline + 6 specialized agents)`);
+  console.log(`[Graph] ✓ Task-orchestrated agent graph compiled with 15 nodes`);
+  console.log(`[Graph]   - Task orchestration: router → task_executor → task_complete → response_synthesizer`);
+  console.log(`[Graph]   - Route nodes: property search (5), property_ops, filter, perplexity, collections, showings, commissions`);
 
   return graph;
 }

@@ -1,0 +1,272 @@
+import { AIMessage, HumanMessage, SystemMessage } from "@langchain/core/messages";
+import { AgentStateType } from "../types/state.js";
+import { createResponseModel } from "../models/openai.js";
+import { sharedPublisher } from "../pubsub/shared.js";
+import { getPlatformContext } from "../utils/platformContext.js";
+import { buildFormattingInstructions, adaptMarkdown, truncateResponse } from "../utils/formatters.js";
+
+/**
+ * Response Synthesizer Node - Combines Multi-Step Results
+ *
+ * This node generates a coherent final response from multi-step workflow results:
+ * 1. Gathers all completed task results
+ * 2. Uses LLM to synthesize into a unified response
+ * 3. Handles failed tasks gracefully
+ * 4. Formats response for the user's platform
+ */
+export async function responseSynthesizerNode(state: AgentStateType): Promise<Partial<AgentStateType>> {
+  console.log('\n[ResponseSynthesizer] ====== Response Synthesizer Node ======');
+
+  const taskList = state.taskList;
+
+  // If no task list, this shouldn't happen but handle gracefully
+  if (!taskList) {
+    console.log('[ResponseSynthesizer] No task list - unexpected state');
+    return {};
+  }
+
+  const userContext = state.userContext || { isAuthenticated: false };
+  const userName = userContext.fullName || 'there';
+  const firstName = userName.split(' ')[0];
+
+  // Resolve platform context
+  const platformContext = getPlatformContext(state);
+  console.log(`[ResponseSynthesizer] Platform: ${platformContext.platform}`);
+
+  // Check if any tasks failed
+  const failedTask = taskList.tasks.find(t => t.status === 'failed');
+  if (failedTask) {
+    console.log(`[ResponseSynthesizer] Task failed: ${failedTask.error}`);
+
+    // Generate error response
+    const errorResponse = generateErrorResponse(failedTask, taskList, firstName);
+
+    // Adapt for platform
+    let adaptedResponse = errorResponse;
+    if (platformContext.platform !== 'web') {
+      adaptedResponse = adaptMarkdown(adaptedResponse, platformContext);
+      adaptedResponse = truncateResponse(adaptedResponse, platformContext);
+    }
+
+    return {
+      finalResponse: adaptedResponse,
+      messages: [new AIMessage({ content: adaptedResponse })],
+    };
+  }
+
+  // Check if there's only one task - might be able to use existing response
+  const completedTasks = taskList.tasks.filter(t => t.status === 'completed');
+  console.log(`[ResponseSynthesizer] Completed tasks: ${completedTasks.length}`);
+
+  if (completedTasks.length === 1 && completedTasks[0].result?.response) {
+    // Single task with existing response - can just use it
+    console.log('[ResponseSynthesizer] Single task with existing response - using directly');
+    const response = completedTasks[0].result.response;
+
+    // Adapt for platform
+    let adaptedResponse = response;
+    if (platformContext.platform !== 'web') {
+      adaptedResponse = adaptMarkdown(adaptedResponse, platformContext);
+      adaptedResponse = truncateResponse(adaptedResponse, platformContext);
+    }
+
+    return {
+      finalResponse: adaptedResponse,
+      messages: [new AIMessage({ content: adaptedResponse })],
+    };
+  }
+
+  // Multiple tasks or no existing response - need to synthesize
+  console.log('[ResponseSynthesizer] Synthesizing response from multiple task results...');
+
+  // Emit progress
+  await sharedPublisher.publishProgressUpdate({
+    sessionId: state.metadata?.sessionId || '',
+    userId: state.metadata?.userId,
+    correlationId: state.metadata?.correlationId,
+    status: '✨ Preparing your response...',
+  });
+
+  try {
+    // Gather all task results
+    const taskSummaries = taskList.tasks.map((task, index) => ({
+      step: index + 1,
+      route: task.route,
+      instruction: task.task,
+      status: task.status,
+      result: task.result,
+    }));
+
+    const model = createResponseModel();
+
+    // Build platform-specific formatting instructions
+    const platformFormattingInstructions = buildFormattingInstructions(platformContext);
+
+    const synthesisPrompt = `You are synthesizing results from a multi-step workflow for the user.
+
+**Original user query:** "${taskList.originalQuery}"
+
+**Tasks executed:**
+${JSON.stringify(taskSummaries, null, 2)}
+
+**Your job:** Generate a coherent, helpful response that:
+1. Directly addresses the user's original query
+2. Summarizes the key findings from each step
+3. Provides any relevant details the user asked for
+4. Suggests actionable next steps if applicable
+5. Uses a friendly, professional tone
+
+${userContext.isAuthenticated ? `Address the user as ${firstName}.` : ''}
+
+${platformFormattingInstructions}
+
+**Important:**
+- Don't list each step mechanically - weave the information together naturally
+- Focus on what matters to the user
+- If property details were retrieved, include the relevant information
+- Keep the response concise but complete
+`;
+
+    const messages = [
+      new SystemMessage({ content: synthesisPrompt }),
+      new HumanMessage({ content: taskList.originalQuery }),
+    ];
+
+    const response = await model.invoke(messages);
+    let finalResponse = response.content as string;
+
+    console.log('[ResponseSynthesizer] ✓ Synthesized response generated');
+
+    // Adapt response for non-web platforms
+    if (platformContext.platform !== 'web') {
+      finalResponse = adaptMarkdown(finalResponse, platformContext);
+      finalResponse = truncateResponse(finalResponse, platformContext);
+      console.log(`[ResponseSynthesizer] Response adapted for ${platformContext.platform} (${finalResponse.length} chars)`);
+    }
+
+    return {
+      finalResponse,
+      messages: [new AIMessage({ content: finalResponse })],
+      platformContext,
+    };
+  } catch (error) {
+    console.error('[ResponseSynthesizer] Error synthesizing response:', error);
+
+    // Fallback: try to construct a simple response from task results
+    const fallbackResponse = generateFallbackResponse(taskList, firstName);
+
+    // Adapt for platform
+    let adaptedResponse = fallbackResponse;
+    if (platformContext.platform !== 'web') {
+      adaptedResponse = adaptMarkdown(adaptedResponse, platformContext);
+      adaptedResponse = truncateResponse(adaptedResponse, platformContext);
+    }
+
+    return {
+      finalResponse: adaptedResponse,
+      messages: [new AIMessage({ content: adaptedResponse })],
+      error: error instanceof Error ? error.message : 'Response synthesis failed',
+    };
+  }
+}
+
+/**
+ * Generate an error response when a task fails
+ */
+function generateErrorResponse(
+  failedTask: { route: string; task: string; error?: string },
+  taskList: { originalQuery: string; tasks: any[] },
+  firstName: string
+): string {
+  const completedBefore = taskList.tasks.filter(t => t.status === 'completed').length;
+  const friendlyError = getFriendlyError(failedTask);
+
+  if (completedBefore === 0) {
+    return `I'm sorry${firstName !== 'there' ? `, ${firstName}` : ''}, I encountered an issue while trying to help you.
+
+${friendlyError}
+
+Would you like to try again or rephrase your request?`;
+  }
+
+  return `I was able to complete ${completedBefore} step${completedBefore > 1 ? 's' : ''} of your request, but encountered an issue.
+
+${friendlyError}
+
+What I was able to do:
+${taskList.tasks
+    .filter(t => t.status === 'completed')
+    .map(t => `• ${getTaskCompletionSummary(t)}`)
+    .join('\n')}
+
+Would you like me to try a different approach?`;
+}
+
+/**
+ * Get user-friendly error message
+ */
+function getFriendlyError(failedTask: { route: string; error?: string }): string {
+  const error = failedTask.error || 'Unknown error';
+
+  if (error.includes('not found') || error.includes('no results')) {
+    return `**What happened:** I couldn't find the information you were looking for.`;
+  }
+
+  if (error.includes('authentication') || error.includes('not authenticated')) {
+    return `**What happened:** This action requires you to be logged in.`;
+  }
+
+  if (error.includes('timeout')) {
+    return `**What happened:** The request took too long to complete.`;
+  }
+
+  return `**What happened:** ${error}`;
+}
+
+/**
+ * Get a summary of what a completed task accomplished
+ */
+function getTaskCompletionSummary(task: { route: string; result?: any }): string {
+  switch (task.route) {
+    case 'PROPERTY_SEARCH':
+      const count = task.result?.totalCount;
+      return count ? `Found ${count} matching properties` : 'Completed property search';
+    case 'PROPERTY_OPERATIONS':
+      return 'Retrieved property details';
+    case 'PROPERTY_FILTER':
+      return 'Filtered results';
+    case 'PERPLEXITY_SEARCH':
+      return 'Completed research';
+    case 'COLLECTIONS':
+      return 'Updated collection';
+    case 'SHOWINGS':
+      return 'Processed showing request';
+    case 'COMMISSIONS':
+      return 'Processed commission request';
+    default:
+      return 'Completed task';
+  }
+}
+
+/**
+ * Generate a fallback response when synthesis fails
+ */
+function generateFallbackResponse(
+  taskList: { originalQuery: string; tasks: any[] },
+  firstName: string
+): string {
+  const completedTasks = taskList.tasks.filter(t => t.status === 'completed');
+
+  if (completedTasks.length === 0) {
+    return `I apologize${firstName !== 'there' ? `, ${firstName}` : ''}, but I wasn't able to complete your request. Please try again.`;
+  }
+
+  // Try to extract useful information from completed tasks
+  const summaries = completedTasks.map(t => getTaskCompletionSummary(t));
+
+  return `Here's what I was able to do${firstName !== 'there' ? ` for you, ${firstName}` : ''}:
+
+${summaries.map(s => `• ${s}`).join('\n')}
+
+Is there anything else you'd like to know?`;
+}

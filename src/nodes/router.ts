@@ -1,19 +1,24 @@
 import { AIMessage, HumanMessage, SystemMessage } from "@langchain/core/messages";
-import { AgentStateType } from "../types/state.js";
+import { AgentStateType, TaskList, TaskItem, RouteType } from "../types/state.js";
 import { createToolCallingModel, createResponseModel, createRouterModel } from "../models/openai.js";
 import { globalToolsRegistry } from "../tools/registry.js";
 import { getUserContextById } from "../utils/userContext.js";
 import { sharedPublisher } from "../pubsub/shared.js";
 import { getPlatformContext } from "../utils/platformContext.js";
 import { buildFormattingInstructions, adaptMarkdown, truncateResponse } from "../utils/formatters.js";
+import { v4 as uuidv4 } from "uuid";
 
 /**
- * Router Node - LLM-Based Decision Making
+ * Router Node - LLM-Based Task List Generation
  *
  * This node uses LLM to:
- * 1. Decide if property_search tool is needed
- * 2. If yes: call tool (graph routes to property_search node)
- * 3. If no: generate response directly
+ * 1. Decide if query is conversational (direct response)
+ * 2. Otherwise, generate a task list with one or more tasks
+ * 3. Be context-aware about active search sessions (searchId)
+ *
+ * Flow:
+ * - Conversational queries → direct response → END
+ * - Task-based queries → task list → task_executor → route nodes → task_complete → loop or synthesize
  */
 export async function routerNode(state: AgentStateType): Promise<Partial<AgentStateType>> {
   console.log(`\n[Router] Processing message: "${state.message}"`);
@@ -180,57 +185,77 @@ When the user asks about "my listings", "my collections", "my CMAs", or "my show
       : '';
 
     const instructions = `
-Your job: Decide which specialized agent to route to, OR answer the user's question directly.
+Your job: Analyze the user's query and decide:
 
-**IMPORTANT: You do NOT call tools. You just decide routing and optionally generate responses.**${searchContext}
+## Decision 1: Is this conversational?
+Conversational queries (respond directly, no tasks):
+- Greetings: "hello", "hi", "hey", "good morning"
+- Thanks: "thank you", "thanks", "appreciated"
+- Acknowledgments: "ok", "got it", "sure", "great"
+- Clarification questions about the system
+- General chitchat not related to real estate tasks
+- Capability questions: "what can you do?", "how do you work?"
 
-**Routing Decision Format:**
-Reply with ONLY ONE of these exact phrases at the start of your response:
+If conversational → Generate your response directly (no JSON).
 
-1. "ROUTE: PROPERTY_SEARCH" - when user asks to FIND or SEARCH for properties (initial search or NEW search with different criteria)
-2. "ROUTE: PROPERTY_FILTER" - when user wants to filter or sort EXISTING search results (legacy - being deprecated)
-3. "ROUTE: PROPERTY_OPERATIONS" - when user wants to work with EXISTING search results:
-   - Filter/sort properties ("under $500k", "sort by price", "keep only 3BR")
-   - Get search results ("what did we find?", "show me the results")
-   - Get property details ("tell me about 123 Main St", "details on first property")
-4. "ROUTE: PERPLEXITY_SEARCH" - when user asks about neighborhoods, schools, amenities, market trends, best areas, etc.
-5. "ROUTE: COLLECTIONS" - when user wants to manage property collections:
-   - Create collection ("create a collection called Favorites")
-   - List collections ("show my collections")
-   - Add property to collection ("add this to my Favorites")
-   - Share collection ("share my Miami collection")
-6. "ROUTE: SHOWINGS" - when user wants to schedule/manage showings:
-   - Schedule showing ("schedule a showing for this property")
-   - List showings ("what showings do I have?")
-   - Reschedule showing ("reschedule my showing to tomorrow")
-   - Cancel showing ("cancel my showing")
-7. "ROUTE: COMMISSIONS" - when user wants commission information:
-   - Request commission ("request commission info")
-   - List commission requests ("show my commission requests")
-   - Check commission updates ("any commission responses?")
-8. Otherwise, just answer the question directly (greetings, simple questions, capability questions)
+## Decision 2: All other queries → Generate Task List
+For ANY query that requires action, generate a JSON task list.
 
-Examples:
-- "find 2 bedroom in aventura" → "ROUTE: PROPERTY_SEARCH"
-- "show me only properties under $500k" → "ROUTE: PROPERTY_OPERATIONS"
-- "sort by price" → "ROUTE: PROPERTY_OPERATIONS"
-- "keep only under 3000" → "ROUTE: PROPERTY_OPERATIONS"
-- "what were the search results?" → "ROUTE: PROPERTY_OPERATIONS"
-- "tell me about 123 Ocean Drive" → "ROUTE: PROPERTY_OPERATIONS"
-- "details on the first property" → "ROUTE: PROPERTY_OPERATIONS"
-- "filter to 3BR and show me the cheapest" → "ROUTE: PROPERTY_OPERATIONS"
-- "what are the best neighborhoods in Miami?" → "ROUTE: PERPLEXITY_SEARCH"
-- "create a collection called Favorites" → "ROUTE: COLLECTIONS"
-- "add this property to my collection" → "ROUTE: COLLECTIONS"
-- "show my collections" → "ROUTE: COLLECTIONS"
-- "share my Miami collection" → "ROUTE: COLLECTIONS"
-- "schedule a showing for this property" → "ROUTE: SHOWINGS"
-- "what showings do I have?" → "ROUTE: SHOWINGS"
-- "cancel my showing for tomorrow" → "ROUTE: SHOWINGS"
-- "request commission info" → "ROUTE: COMMISSIONS"
-- "what commission requests are pending?" → "ROUTE: COMMISSIONS"
-- "any commission responses?" → "ROUTE: COMMISSIONS"
-- "hi" → "Hi there! How can I help you today?"
+**IMPORTANT: Return ONLY this JSON format (no markdown, no explanation):**
+
+\`\`\`json
+{
+  "tasks": [
+    { "route": "ROUTE_NAME", "task": "Natural language instruction for this step" }
+  ]
+}
+\`\`\`
+
+## Route Options:
+- **PROPERTY_SEARCH**: Search for properties (new search criteria)
+- **PROPERTY_OPERATIONS**: Work with search results (filter, sort, details, CMA, get results)
+- **PERPLEXITY_SEARCH**: Web research (neighborhoods, market trends, schools)
+- **COLLECTIONS**: Manage property collections
+- **SHOWINGS**: Schedule/manage showings
+- **COMMISSIONS**: Commission requests
+
+${searchContext}
+
+## Context-Aware Task Generation Examples:
+
+**NO ACTIVE SEARCH (user hasn't searched yet):**
+- "find 3BR in Miami" → 1 task: PROPERTY_SEARCH
+- "get agent details for property 123" → 2 tasks: PROPERTY_SEARCH (find property), then PROPERTY_OPERATIONS (get details)
+- "schedule showing for a condo in Brickell" → 3 tasks: PROPERTY_SEARCH, PROPERTY_OPERATIONS (identify), SHOWINGS
+
+**WITH ACTIVE SEARCH (user has search results):**
+- "show me details of the first one" → 1 task: PROPERTY_OPERATIONS
+- "filter to under $500k" → 1 task: PROPERTY_OPERATIONS
+- "schedule a showing for the cheapest" → 2 tasks: PROPERTY_OPERATIONS (identify), SHOWINGS
+- "find houses in Miami Beach" (NEW search) → 1 task: PROPERTY_SEARCH
+
+**Example JSON outputs:**
+
+Single task (with active search):
+\`\`\`json
+{"tasks":[{"route":"PROPERTY_OPERATIONS","task":"Get detailed agent/listing information for the first property in results"}]}
+\`\`\`
+
+Multiple tasks (no active search):
+\`\`\`json
+{"tasks":[{"route":"PROPERTY_SEARCH","task":"Search for 3-bedroom condos in Aventura under $600k"},{"route":"PROPERTY_OPERATIONS","task":"Get detailed listing agent information for the top result"}]}
+\`\`\`
+
+Multi-step workflow:
+\`\`\`json
+{"tasks":[{"route":"PROPERTY_SEARCH","task":"Search for rental properties in Coral Gables"},{"route":"PROPERTY_OPERATIONS","task":"Identify the cheapest available property"},{"route":"SHOWINGS","task":"Schedule a showing for the identified property"}]}
+\`\`\`
+
+**CRITICAL RULES:**
+1. Return ONLY JSON for task-based queries (no markdown, no explanation)
+2. Return plain text for conversational queries (no JSON)
+3. Be context-aware: if searchId exists, don't create unnecessary PROPERTY_SEARCH tasks
+4. Each task instruction should be specific and actionable
 `;
 
     // Create user message for state updates
@@ -267,131 +292,52 @@ Examples:
     const response = await model.invoke(messages);
     const responseText = response.content as string;
 
-    console.log('[Router] 🤖 LLM Response:', responseText.substring(0, 200));
+    console.log('[Router] 🤖 LLM Response:', responseText.substring(0, 300));
 
-    // Check for routing directives (case-insensitive regex for robustness)
-    if (/ROUTE:\s*PROPERTY[_\s]SEARCH/i.test(responseText)) {
-      console.log('[Router] ✓ Routing to property_search');
-      return {
-        messages: [userMessage],
-        userContext,
-        platformContext,
-        metadata: {
-          ...state.metadata,
-          shouldSearchProperties: true,
-          shouldFilterProperties: false,
-          shouldUsePropertyOperations: false,
-          shouldSearchPerplexity: false,
-          shouldUseCollections: false,
-          shouldUseShowings: false,
-          shouldUseCommissions: false,
-        },
+    // Try to parse as JSON task list
+    const taskListResult = parseTaskListResponse(responseText);
+
+    if (taskListResult) {
+      // Task-based query - create task list and route to task_executor
+      console.log(`[Router] ✓ Generated task list with ${taskListResult.tasks.length} task(s)`);
+      taskListResult.tasks.forEach((t, i) => {
+        console.log(`[Router]   Task ${i + 1}: ${t.route} - "${t.task}"`);
+      });
+
+      // Build TaskList structure
+      const taskList: TaskList = {
+        tasks: taskListResult.tasks.map(t => ({
+          id: uuidv4(),
+          route: t.route as RouteType,
+          task: t.task,
+          status: 'pending' as const,
+        })),
+        currentTaskIndex: 0,
+        originalQuery: state.message,
       };
-    } else if (/ROUTE:\s*PROPERTY[_\s]OPERATIONS/i.test(responseText)) {
-      console.log('[Router] ✓ Routing to property_operations');
+
       return {
         messages: [userMessage],
         userContext,
         platformContext,
+        taskList,
         metadata: {
           ...state.metadata,
-          shouldSearchProperties: false,
-          shouldFilterProperties: false,
-          shouldUsePropertyOperations: true,
-          shouldSearchPerplexity: false,
-          shouldUseCollections: false,
-          shouldUseShowings: false,
-          shouldUseCommissions: false,
-        },
-      };
-    } else if (/ROUTE:\s*PROPERTY[_\s]FILTER/i.test(responseText)) {
-      console.log('[Router] ✓ Routing to property_filter_sort (legacy)');
-      return {
-        messages: [userMessage],
-        userContext,
-        platformContext,
-        metadata: {
-          ...state.metadata,
-          shouldSearchProperties: false,
-          shouldFilterProperties: true,
-          shouldUsePropertyOperations: false,
-          shouldSearchPerplexity: false,
-          shouldUseCollections: false,
-          shouldUseShowings: false,
-          shouldUseCommissions: false,
-        },
-      };
-    } else if (/ROUTE:\s*PERPLEXITY[_\s]SEARCH/i.test(responseText)) {
-      console.log('[Router] ✓ Routing to perplexity_search');
-      return {
-        messages: [userMessage],
-        userContext,
-        platformContext,
-        metadata: {
-          ...state.metadata,
-          shouldSearchProperties: false,
-          shouldFilterProperties: false,
-          shouldUsePropertyOperations: false,
-          shouldSearchPerplexity: true,
-          shouldUseCollections: false,
-          shouldUseShowings: false,
-          shouldUseCommissions: false,
-        },
-      };
-    } else if (/ROUTE:\s*COLLECTIONS/i.test(responseText)) {
-      console.log('[Router] ✓ Routing to collections');
-      return {
-        messages: [userMessage],
-        userContext,
-        platformContext,
-        metadata: {
-          ...state.metadata,
-          shouldSearchProperties: false,
-          shouldFilterProperties: false,
-          shouldUsePropertyOperations: false,
-          shouldSearchPerplexity: false,
-          shouldUseCollections: true,
-          shouldUseShowings: false,
-          shouldUseCommissions: false,
-        },
-      };
-    } else if (/ROUTE:\s*SHOWINGS/i.test(responseText)) {
-      console.log('[Router] ✓ Routing to showings');
-      return {
-        messages: [userMessage],
-        userContext,
-        platformContext,
-        metadata: {
-          ...state.metadata,
-          shouldSearchProperties: false,
-          shouldFilterProperties: false,
-          shouldUsePropertyOperations: false,
-          shouldSearchPerplexity: false,
-          shouldUseCollections: false,
-          shouldUseShowings: true,
-          shouldUseCommissions: false,
-        },
-      };
-    } else if (/ROUTE:\s*COMMISSIONS/i.test(responseText)) {
-      console.log('[Router] ✓ Routing to commissions');
-      return {
-        messages: [userMessage],
-        userContext,
-        platformContext,
-        metadata: {
-          ...state.metadata,
+          // Set flag to route to task_executor
+          shouldUseTaskExecutor: true,
+          // Clear all direct routing flags
           shouldSearchProperties: false,
           shouldFilterProperties: false,
           shouldUsePropertyOperations: false,
           shouldSearchPerplexity: false,
           shouldUseCollections: false,
           shouldUseShowings: false,
-          shouldUseCommissions: true,
+          shouldUseCommissions: false,
         },
       };
     } else {
-      // No routing - router generated response directly
-      console.log('[Router] ✓ Generated response directly (no routing needed)');
+      // Conversational query - router generated response directly
+      console.log('[Router] ✓ Generated conversational response (no tasks)');
 
       // Adapt response for non-web platforms
       let adaptedResponse = responseText;
@@ -405,8 +351,10 @@ Examples:
         userContext,
         platformContext,
         finalResponse: adaptedResponse,
+        taskList: null, // Explicitly no task list
         metadata: {
           ...state.metadata,
+          shouldUseTaskExecutor: false,
           shouldSearchProperties: false,
           shouldFilterProperties: false,
           shouldUsePropertyOperations: false,
@@ -423,4 +371,72 @@ Examples:
       error: error instanceof Error ? error.message : 'Router node failed',
     };
   }
+}
+
+/**
+ * Parse LLM response to extract task list JSON
+ * Returns null if response is not a valid task list (conversational response)
+ */
+function parseTaskListResponse(responseText: string): { tasks: Array<{ route: string; task: string }> } | null {
+  // Try to extract JSON from the response
+  // The LLM might wrap it in markdown code blocks or return it directly
+
+  // First, try to find JSON in code blocks
+  const codeBlockMatch = responseText.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/);
+  if (codeBlockMatch) {
+    try {
+      const parsed = JSON.parse(codeBlockMatch[1]);
+      if (isValidTaskList(parsed)) {
+        return parsed;
+      }
+    } catch (e) {
+      // Not valid JSON in code block
+    }
+  }
+
+  // Try to find raw JSON object
+  const jsonMatch = responseText.match(/\{[\s\S]*"tasks"[\s\S]*\}/);
+  if (jsonMatch) {
+    try {
+      const parsed = JSON.parse(jsonMatch[0]);
+      if (isValidTaskList(parsed)) {
+        return parsed;
+      }
+    } catch (e) {
+      // Not valid JSON
+    }
+  }
+
+  // Not a task list response - must be conversational
+  return null;
+}
+
+/**
+ * Validate that parsed JSON is a valid task list
+ */
+function isValidTaskList(obj: any): obj is { tasks: Array<{ route: string; task: string }> } {
+  if (!obj || typeof obj !== 'object') return false;
+  if (!Array.isArray(obj.tasks)) return false;
+  if (obj.tasks.length === 0) return false;
+
+  // Valid route types
+  const validRoutes = [
+    'PROPERTY_SEARCH',
+    'PROPERTY_OPERATIONS',
+    'PROPERTY_FILTER',
+    'PERPLEXITY_SEARCH',
+    'COLLECTIONS',
+    'SHOWINGS',
+    'COMMISSIONS',
+    'DIRECT_RESPONSE',
+  ];
+
+  return obj.tasks.every((task: any) =>
+    task &&
+    typeof task === 'object' &&
+    typeof task.route === 'string' &&
+    validRoutes.includes(task.route) &&
+    typeof task.task === 'string' &&
+    task.task.length > 0
+  );
 }
