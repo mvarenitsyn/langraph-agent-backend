@@ -33,20 +33,40 @@ The response includes:
 Example use cases:
 1. "Show me full details for listing ABC123"
 2. User clicks property card → fetch full details
-3. "What's the full description for this property?"`,
+3. "What's the full description for this property?"
+4. "Details for 123 Ocean Drive, Miami Beach"`,
 
   schema: z.object({
     listingKey: z
       .string()
+      .optional()
       .describe(
         "The ListingKey/MLS number of the property (e.g., 'A11696203', 'RX-11030975')",
       ),
+    address: z
+      .string()
+      .optional()
+      .describe(
+        "Property address for lookup (e.g., '123 Ocean Drive, Miami Beach'). Use when listingKey is not known.",
+      ),
   }),
 
-  func: async ({ listingKey }, config) => {
+  func: async ({ listingKey, address }, config) => {
     console.log(
-      `[PropertyGetFullDetailsTool] Fetching full details for ${listingKey}`,
+      `[PropertyGetFullDetailsTool] Fetching full details for listingKey: ${listingKey || 'not provided'}, address: ${address || 'not provided'}`,
     );
+
+    if (!listingKey && !address) {
+      return JSON.stringify(
+        {
+          success: false,
+          error: "Either listingKey or address must be provided",
+          suggestion: "Provide a listingKey (e.g., 'A11696203') or an address (e.g., '123 Ocean Drive, Miami Beach')",
+        },
+        null,
+        2,
+      );
+    }
 
     try {
       const pool = new Pool({
@@ -60,41 +80,78 @@ Example use cases:
 
       const start = Date.now();
 
-      // Fetch complete property data including raw_data JSONB
-      const result = await pool.query(
-        `
-        SELECT
-          tp.listing_key,
-          tp.unparsed_address,
-          tp.city,
-          tp.state_or_province as state,
-          tp.postal_code,
-          tp.list_price,
-          tp.bedrooms_total,
-          tp.bathrooms_total_integer as bathrooms_total,
-          tp.living_area,
-          tp.standard_status,
-          tp.property_type,
-          tp.property_sub_type,
-          tp.year_built,
-          tp.latitude,
-          tp.longitude,
-          tp.raw_data
-        FROM trestle_properties tp
-        WHERE tp.listing_key = $1
-      `,
-        [listingKey],
-      );
+      let result;
+
+      if (listingKey) {
+        // Direct lookup by listingKey (fast, indexed)
+        result = await pool.query(
+          `
+          SELECT
+            tp.listing_key,
+            tp.unparsed_address,
+            tp.city,
+            tp.state_or_province as state,
+            tp.postal_code,
+            tp.list_price,
+            tp.bedrooms_total,
+            tp.bathrooms_total_integer as bathrooms_total,
+            tp.living_area,
+            tp.standard_status,
+            tp.property_type,
+            tp.property_sub_type,
+            tp.year_built,
+            tp.latitude,
+            tp.longitude,
+            tp.raw_data
+          FROM trestle_properties tp
+          WHERE tp.listing_key = $1
+        `,
+          [listingKey],
+        );
+      } else {
+        // Address-based lookup using full-text search
+        console.log(`[PropertyGetFullDetailsTool] Searching by address: ${address}`);
+        result = await pool.query(
+          `
+          SELECT
+            tp.listing_key,
+            tp.unparsed_address,
+            tp.city,
+            tp.state_or_province as state,
+            tp.postal_code,
+            tp.list_price,
+            tp.bedrooms_total,
+            tp.bathrooms_total_integer as bathrooms_total,
+            tp.living_area,
+            tp.standard_status,
+            tp.property_type,
+            tp.property_sub_type,
+            tp.year_built,
+            tp.latitude,
+            tp.longitude,
+            tp.raw_data,
+            similarity(LOWER(unparsed_address), LOWER($1)) as addr_sim
+          FROM trestle_properties tp
+          WHERE LOWER(unparsed_address) LIKE '%' || LOWER($1) || '%'
+             OR similarity(LOWER(unparsed_address), LOWER($1)) > 0.3
+          ORDER BY addr_sim DESC
+          LIMIT 1
+        `,
+          [address],
+        );
+      }
 
       const fetchTime = Date.now() - start;
 
       if (result.rows.length === 0) {
+        const searchParam = listingKey ? `ListingKey: ${listingKey}` : `address: ${address}`;
         return JSON.stringify(
           {
             success: false,
-            error: `Property not found with ListingKey: ${listingKey}`,
-            suggestion:
-              "Check the ListingKey and try again, or use property_search to find properties",
+            error: `Property not found with ${searchParam}`,
+            suggestion: listingKey
+              ? "Check the ListingKey and try again, or use property_search to find properties"
+              : "Try a more specific address with unit number, or use property_search to find similar properties",
           },
           null,
           2,
