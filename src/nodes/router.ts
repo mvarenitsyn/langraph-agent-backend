@@ -236,42 +236,15 @@ Examples:
     // Create user message for state updates
     const userMessage = new HumanMessage({ content: state.message });
 
-    // 🚨 HARD ROUTING: If searchId exists, check if this is a NEW SEARCH or FOLLOW-UP
-    // This overrides LLM decision to prevent incorrect routing to property_search
+    // Always use LLM to decide routing - no hard-coded pattern detection
+    // The LLM has clear prompts with all routes, tools, and use cases
+    // searchContext variable (above) passes searchId to LLM so it knows about active searches
     if (hasActiveSearch) {
       console.log(`[Router] 🔍 Active search session detected (searchId: ${currentSearchId})`);
-
-      // Pattern detection for NEW SEARCH queries (even if searchId exists)
-      const newSearchPatterns = /\b(find|search|show me|rentals?|condos?|homes?|properties|apartments?|houses?)\s+(in|near|around|at)\s+/i;
-      const isNewSearchQuery = newSearchPatterns.test(state.message);
-
-      if (isNewSearchQuery) {
-        console.log('[Router] 🆕 Detected NEW SEARCH keywords despite existing searchId');
-        console.log('[Router] 💭 Letting LLM decide routing (likely property_search)...');
-        // Fall through to LLM routing below
-      } else {
-        console.log('[Router] ⚡ HARD ROUTING: Follow-up detected, routing to property_operations (bypassing LLM)');
-
-        return {
-          messages: [userMessage],
-          userContext,
-          platformContext,
-          metadata: {
-            ...state.metadata,
-            searchId: currentSearchId,  // 🚨 FIX: Use resolved searchId
-            shouldSearchProperties: false,
-            shouldFilterProperties: false,
-            shouldUsePropertyOperations: true,
-            shouldSearchPerplexity: false,
-            shouldUseCollections: false,
-            shouldUseShowings: false,
-            shouldUseCommissions: false,
-          },
-        };
-      }
+      console.log('[Router] 💭 Letting LLM decide routing based on context...');
     }
 
-    // No active search - use LLM to decide routing
+    // Use LLM to decide routing
     // 🚨 FIX: Start fresh without conversation history to avoid tool_calls/tool messages mismatch
     // The router only needs current message + user context to make routing decisions
     // Including checkpoint history can cause OpenAI API errors if it contains orphaned tool messages

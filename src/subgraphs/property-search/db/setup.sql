@@ -47,7 +47,10 @@ CREATE TABLE IF NOT EXISTS search_result_items (
 
     -- Deduplication info
     duplicate_count INTEGER DEFAULT 1,
-    alternate_types TEXT[]
+    alternate_types TEXT[],
+
+    -- Filter persistence (for shareable filtered results)
+    is_filtered_out BOOLEAN DEFAULT false
 );
 
 -- Indexes for search_result_items
@@ -57,6 +60,7 @@ CREATE INDEX IF NOT EXISTS idx_search_result_items_bedrooms ON search_result_ite
 CREATE INDEX IF NOT EXISTS idx_search_result_items_sqft ON search_result_items(search_id, sqft);
 CREATE INDEX IF NOT EXISTS idx_search_result_items_combined_score ON search_result_items(search_id, combined_score DESC);
 CREATE INDEX IF NOT EXISTS idx_search_result_items_city ON search_result_items(search_id, city);
+CREATE INDEX IF NOT EXISTS idx_search_result_items_filtered ON search_result_items(search_id, is_filtered_out);
 
 -- Function to delete old search results (optional cleanup)
 CREATE OR REPLACE FUNCTION cleanup_old_search_results(days_old INTEGER DEFAULT 30)

@@ -41,6 +41,7 @@ export interface GetResultsParams {
   };
   page?: number;
   pageSize?: number;
+  includeFiltered?: boolean; // true = show all results, false = show only non-filtered results (default)
 }
 
 export interface PageInfo {
@@ -156,13 +157,19 @@ export async function getSearchResults(params: GetResultsParams): Promise<{ resu
     sortOrder = 'desc',
     filters = {},
     page = 1,
-    pageSize = 20
+    pageSize = 20,
+    includeFiltered = false // Default: only show non-filtered results
   } = params;
 
   // Build WHERE clause
   const conditions: string[] = ['search_id = $1'];
   const values: unknown[] = [searchId];
   let paramIndex = 2;
+
+  // By default, exclude filtered-out results unless explicitly requested
+  if (!includeFiltered) {
+    conditions.push('is_filtered_out = false');
+  }
 
   if (filters.minPrice !== undefined) {
     conditions.push(`price >= $${paramIndex++}`);
@@ -264,19 +271,150 @@ export async function deleteSearchResults(searchId: string): Promise<boolean> {
 }
 
 /**
+ * Mark properties as filtered out based on filter criteria.
+ * First resets all to not filtered, then marks properties that DON'T match filters as filtered out.
+ * This persists the filter state so shared links show filtered results.
+ */
+export async function markFilteredOut(
+  searchId: string,
+  filters: {
+    minPrice?: number;
+    maxPrice?: number;
+    minBeds?: number;
+    maxBeds?: number;
+    cities?: string[];
+    status?: string[];
+  }
+): Promise<{ filteredCount: number; totalCount: number }> {
+  const client = await pool.connect();
+
+  try {
+    await client.query('BEGIN');
+
+    // Step 1: Reset all to not filtered
+    await client.query(
+      'UPDATE search_result_items SET is_filtered_out = false WHERE search_id = $1',
+      [searchId]
+    );
+
+    // Step 2: Build exclusion conditions (properties that DON'T match filters)
+    const excludeConditions: string[] = [];
+    const params: unknown[] = [searchId];
+    let paramIndex = 2;
+
+    // Exclude properties OUTSIDE the filter range
+    if (filters.minPrice !== undefined) {
+      excludeConditions.push(`(price IS NULL OR price < $${paramIndex++})`);
+      params.push(filters.minPrice);
+    }
+    if (filters.maxPrice !== undefined) {
+      excludeConditions.push(`(price IS NULL OR price > $${paramIndex++})`);
+      params.push(filters.maxPrice);
+    }
+    if (filters.minBeds !== undefined) {
+      excludeConditions.push(`(bedrooms IS NULL OR bedrooms < $${paramIndex++})`);
+      params.push(filters.minBeds);
+    }
+    if (filters.maxBeds !== undefined) {
+      excludeConditions.push(`(bedrooms IS NULL OR bedrooms > $${paramIndex++})`);
+      params.push(filters.maxBeds);
+    }
+    if (filters.cities && filters.cities.length > 0) {
+      excludeConditions.push(`(city IS NULL OR city != ALL($${paramIndex++}))`);
+      params.push(filters.cities);
+    }
+    if (filters.status && filters.status.length > 0) {
+      excludeConditions.push(`(status IS NULL OR status != ALL($${paramIndex++}))`);
+      params.push(filters.status);
+    }
+
+    // Step 3: Mark excluded properties as filtered out
+    if (excludeConditions.length > 0) {
+      const excludeQuery = `
+        UPDATE search_result_items
+        SET is_filtered_out = true
+        WHERE search_id = $1 AND (${excludeConditions.join(' OR ')})
+      `;
+      await client.query(excludeQuery, params);
+    }
+
+    await client.query('COMMIT');
+
+    // Step 4: Get counts
+    const countResult = await pool.query<{ filtered_count: string; total_count: string }>(`
+      SELECT
+        COUNT(*) FILTER (WHERE is_filtered_out = false) as filtered_count,
+        COUNT(*) as total_count
+      FROM search_result_items
+      WHERE search_id = $1
+    `, [searchId]);
+
+    const filteredCount = parseInt(countResult.rows[0].filtered_count, 10);
+    const totalCount = parseInt(countResult.rows[0].total_count, 10);
+
+    console.log(`[SearchResultsDB] markFilteredOut: ${filteredCount} of ${totalCount} properties match filters`);
+
+    return { filteredCount, totalCount };
+
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * Reset all filters for a search (mark all properties as not filtered).
+ * Call this when user clicks "Reset Filters".
+ */
+export async function resetFilters(searchId: string): Promise<{ count: number }> {
+  const result = await pool.query(
+    'UPDATE search_result_items SET is_filtered_out = false WHERE search_id = $1',
+    [searchId]
+  );
+  const count = result.rowCount ?? 0;
+  console.log(`[SearchResultsDB] resetFilters: Reset ${count} properties for searchId ${searchId}`);
+  return { count };
+}
+
+/**
  * Get a single property by listing key from a search
  * Efficient direct lookup using indexed listing_key column
+ * Now includes listing agent info from trestle_properties
  */
 export async function getPropertyByListingKey(
   searchId: string,
   listingKey: string
 ): Promise<SearchResult | null> {
-  const result = await pool.query<{ property_data: SearchResult }>(
-    `SELECT property_data FROM search_result_items
-     WHERE search_id = $1 AND listing_key = $2`,
+  const result = await pool.query(
+    `SELECT
+      sri.property_data,
+      tp.raw_data->>'ListAgentFullName' as list_agent_full_name,
+      tp.raw_data->>'ListAgentMlsId' as list_agent_mls_id,
+      tp.raw_data->>'ListOfficeName' as list_office_name,
+      tp.raw_data->>'ListAgentEmail' as list_agent_email,
+      tp.raw_data->>'ListAgentDirectPhone' as list_agent_direct_phone
+    FROM search_result_items sri
+    LEFT JOIN trestle_properties tp ON sri.listing_key = tp.listing_key
+    WHERE sri.search_id = $1 AND sri.listing_key = $2`,
     [searchId, listingKey]
   );
-  return result.rows[0]?.property_data || null;
+
+  if (!result.rows[0]) return null;
+
+  const row = result.rows[0];
+  const property = row.property_data as SearchResult;
+
+  // Merge agent info into property object
+  return {
+    ...property,
+    listAgentFullName: row.list_agent_full_name,
+    listAgentMlsId: row.list_agent_mls_id,
+    listOfficeName: row.list_office_name,
+    listAgentEmail: row.list_agent_email,
+    listAgentDirectPhone: row.list_agent_direct_phone,
+  };
 }
 
 /**
@@ -375,7 +513,8 @@ export async function initializeSearchResultsTables(): Promise<void> {
         combined_score DECIMAL(10,4),
         property_data JSONB NOT NULL,
         duplicate_count INTEGER DEFAULT 1,
-        alternate_types TEXT[]
+        alternate_types TEXT[],
+        is_filtered_out BOOLEAN DEFAULT false
       )
     `);
 
@@ -385,6 +524,7 @@ export async function initializeSearchResultsTables(): Promise<void> {
     await client.query('CREATE INDEX IF NOT EXISTS idx_search_result_items_price ON search_result_items(search_id, price)');
     await client.query('CREATE INDEX IF NOT EXISTS idx_search_result_items_bedrooms ON search_result_items(search_id, bedrooms)');
     await client.query('CREATE INDEX IF NOT EXISTS idx_search_result_items_combined_score ON search_result_items(search_id, combined_score DESC)');
+    await client.query('CREATE INDEX IF NOT EXISTS idx_search_result_items_filtered ON search_result_items(search_id, is_filtered_out)');
 
     console.log('[SearchResultsDB] Tables initialized successfully');
   } finally {

@@ -81,6 +81,12 @@ export async function searchResponseGeneratorNode(state: AgentStateType): Promis
     // Add platform-specific formatting instructions
     const platformFormattingInstructions = buildFormattingInstructions(platformContext);
 
+    // Get searchStats for display limit awareness
+    const searchStats = state.toolResults?.searchStats as any | undefined;
+    const displayLimit = searchStats?.displayLimit || 50;
+    const totalFound = summary?.total || totalCount || 0;
+    const isLimitedResults = totalFound > displayLimit;
+
     const responseInstructions = `
 **Your job:** Create a concise, helpful response based on the property search results.
 
@@ -94,6 +100,18 @@ ${isAuthenticated
 - Lead with key numbers (count, price range)
 - End with 1-2 clear next step suggestions
 
+${isLimitedResults ? `**IMPORTANT - Large Result Set:**
+- Total properties found: ${totalFound}
+- Showing: Top ${displayLimit} most relevant results
+- You MUST mention the total found and that you're showing the top ${displayLimit}
+- Suggest 2-3 specific filters to narrow down based on what's MISSING from the user's query:
+  * If no price range mentioned → suggest adding a budget
+  * If broad location (e.g., "Miami") → suggest specific neighborhoods/areas
+  * If no bedrooms specified → suggest adding bedroom requirements
+  * If no property type → suggest condo/house/townhouse
+- Keep suggestions relevant to what the user hasn't specified yet
+- Example: "Found 237 properties. Showing top 50 most relevant. To narrow down: try adding a price range, or focus on a specific neighborhood like South Beach."
+` : ''}
 ${platformFormattingInstructions}
 
 Generate a focused response based on the search summary below.
@@ -103,10 +121,13 @@ Generate a focused response based on the search summary below.
     const summaryText = summary ? `
 Search Results Summary:
 - Total properties found: ${summary.total}
+- Showing to user: ${Math.min(summary.total, displayLimit)} (display limit: ${displayLimit})
+${isLimitedResults ? `- NOTE: Results exceed display limit. User sees top ${displayLimit} most relevant.` : ''}
 ${summary.duplicatesRemoved > 0 ? `- Duplicates removed: ${summary.duplicatesRemoved}` : ''}
 ${summary.topCities?.length > 0 ? `- Top cities: ${summary.topCities.join(', ')}` : ''}
 ${summary.priceRange?.min && summary.priceRange?.max ? `- Price range: $${summary.priceRange.min.toLocaleString()} - $${summary.priceRange.max.toLocaleString()}` : ''}
 ${summary.bedroomRange?.min && summary.bedroomRange?.max ? `- Bedrooms: ${summary.bedroomRange.min} - ${summary.bedroomRange.max}` : ''}
+- User's original query: "${state.message}"
 - Search ID: ${searchId}
 ` : `Search completed with ${totalCount} properties (searchId: ${searchId})`;
 

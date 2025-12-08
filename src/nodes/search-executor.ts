@@ -117,10 +117,14 @@ function convertToFilters(query: MappedQuery): InternalFilters {
   if (s.minSqft !== null) filters.minSqft = s.minSqft;
   if (s.maxSqft !== null) filters.maxSqft = s.maxSqft;
   if (s.propertyType?.length) filters.propertyType = s.propertyType;
-  // propertySubType is now a single string
-  if (s.propertySubType) filters.propertySubType = s.propertySubType;
-  // status is now a single string
-  if (s.status) filters.status = s.status;
+  // propertySubType is now a single string - guard against LLM returning invalid values like ":null"
+  if (s.propertySubType && s.propertySubType !== ':null' && s.propertySubType !== 'null') {
+    filters.propertySubType = s.propertySubType;
+  }
+  // status is now a single string - guard against LLM returning invalid values like ":null"
+  if (s.status && s.status !== ':null' && s.status !== 'null') {
+    filters.status = s.status;
+  }
   // Year built
   if (s.minYearBuilt !== null) filters.minYearBuilt = s.minYearBuilt;
   if (s.maxYearBuilt !== null) filters.maxYearBuilt = s.maxYearBuilt;
@@ -569,9 +573,9 @@ export async function searchExecutorNode(state: AgentStateType): Promise<Partial
 
     const sortedKeys = filteredEntries.map(([key]) => key);
 
-    // Fetch full data
+    // Fetch full data (up to 1000 results - frontend will paginate with 50 per page)
     const fetchStart = Date.now();
-    const results = await fetchProperties(sortedKeys, locationResults, featureResults, combinedResults, 50);
+    const results = await fetchProperties(sortedKeys, locationResults, featureResults, combinedResults, 1000);
     console.log(`[SearchExecutor] PG Fetch: ${results.length} results (${Date.now() - fetchStart}ms)`);
 
     // Build response summary (use filtered count, not total)
@@ -597,8 +601,10 @@ export async function searchExecutorNode(state: AgentStateType): Promise<Partial
         ...state.toolResults,
         searchResults: results,
         searchStats: {
-          total: filteredCount,  // Use filtered count (after score cutoff)
-          totalBeforeCutoff: combinedResults.size,  // Original total
+          total: results.length,  // Actual saved results (up to 1000)
+          totalMatching: filteredCount,  // Total matching after score cutoff
+          totalBeforeCutoff: combinedResults.size,  // Original total before any filtering
+          displayLimit: 50,  // Frontend shows max 50 per page
           locationCount: locationResults.size,
           featureCount: featureResults.size,
           topScore: topScore,

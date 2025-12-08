@@ -24,7 +24,13 @@ export const commissionRequestTool = new DynamicStructuredTool({
   name: "commission_request",
   description: `Request commission information from a listing agent.
 
-⚠️ PREREQUISITE: The user must be authenticated (have a userId).
+⚠️ PREREQUISITES:
+1. The user must be authenticated (have a userId)
+2. You MUST have the listing agent's email address
+
+WORKFLOW:
+1. First use property_get_details to get listingAgentEmail for the property
+2. Then call this tool with listingKey, propertyAddress, and listingAgentEmail
 
 Use this when the user wants to:
 - Request commission info for a property
@@ -39,13 +45,21 @@ Examples:
   schema: z.object({
     listingKey: z.string().describe("Property ListingKey from search results"),
     propertyAddress: z.string().describe("Property address for context"),
+    listingAgentEmail: z
+      .string()
+      .optional()
+      .describe("Listing agent's email address (required for commission request)"),
+    listingAgentName: z
+      .string()
+      .optional()
+      .describe("Listing agent's name"),
     message: z
       .string()
       .optional()
       .describe("Optional message to the listing agent"),
   }),
 
-  func: async ({ listingKey, propertyAddress, message }, config) => {
+  func: async ({ listingKey, propertyAddress, listingAgentEmail, listingAgentName, message }, config) => {
     const userId = (config as any)?.metadata?.userId;
 
     const sessionId = (config as any)?.metadata?.sessionId;
@@ -84,6 +98,20 @@ Examples:
       );
     }
 
+    // listingAgentEmail is required by backend
+    if (!listingAgentEmail) {
+      return JSON.stringify(
+        {
+          success: false,
+          error: "Missing listing agent email",
+          message: "Listing agent email is required to send a commission request. Please get property details first to retrieve the agent's email.",
+          suggestion: "Use property_get_details tool to get the listing agent's email, then call this tool with listingAgentEmail.",
+        },
+        null,
+        2,
+      );
+    }
+
     try {
       const response = await fetch(`${BACKEND_URL}/api/commission`, {
         method: "POST",
@@ -92,9 +120,11 @@ Examples:
           "x-user-id": userId,
         },
         body: JSON.stringify({
-          listingKey,
+          listingId: listingKey, // Backend uses listingId, tool uses listingKey
+          listingAgentEmail,
+          listingAgentName,
           propertyAddress,
-          message,
+          requesterMessage: message,
         }),
         // @ts-ignore
         agent: httpsAgent,

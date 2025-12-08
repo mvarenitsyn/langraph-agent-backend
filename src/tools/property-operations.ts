@@ -18,6 +18,7 @@ import {
   getSearchResults as getSearchResultsFromDB,
   getSearchMetadata,
   getPropertyByListingKey,
+  markFilteredOut,
 } from "../subgraphs/property-search/db/search-results.js";
 
 /**
@@ -148,19 +149,41 @@ Examples:
     try {
       const startTime = Date.now();
 
-      // Use SQL-based filtering from search-results.ts
-      const { results, pageInfo } = await getSearchResultsFromDB({
-        searchId,
-        sortBy: sortBy || "combined_score",
-        sortOrder: sortOrder || "desc",
-        filters: {
+      // Check if any filter conditions are provided (not just sort)
+      const hasFilters =
+        minPrice !== undefined ||
+        maxPrice !== undefined ||
+        minBeds !== undefined ||
+        maxBeds !== undefined ||
+        (cities && cities.length > 0) ||
+        (status && status.length > 0);
+
+      // Persist filters to database for shareable results
+      let filterStats: { filteredCount: number; totalCount: number } | null =
+        null;
+      if (hasFilters) {
+        console.log(
+          `[PropertyFilterSortTool] Persisting filters for searchId: ${searchId}`,
+        );
+        filterStats = await markFilteredOut(searchId, {
           minPrice,
           maxPrice,
           minBeds,
           maxBeds,
           cities,
           status,
-        },
+        });
+        console.log(
+          `[PropertyFilterSortTool] Filter persisted: ${filterStats.filteredCount} of ${filterStats.totalCount} properties match`,
+        );
+      }
+
+      // Query results - is_filtered_out = false is applied automatically
+      const { results, pageInfo } = await getSearchResultsFromDB({
+        searchId,
+        sortBy: sortBy || "combined_score",
+        sortOrder: sortOrder || "desc",
+        // No filters needed here - is_filtered_out column handles it
         page: page || 1,
         pageSize: Math.min(pageSize || 20, 100),
       });
@@ -184,6 +207,10 @@ Examples:
           ...limitedResponse,
           searchId,
           pageInfo,
+          // Filter persistence info for shareable results
+          isFiltered: hasFilters,
+          originalCount: filterStats?.totalCount || pageInfo.totalItems,
+          filteredCount: filterStats?.filteredCount || pageInfo.totalItems,
           appliedFilters: {
             sortBy: sortBy || "combined_score",
             sortOrder: sortOrder || "desc",
@@ -195,7 +222,9 @@ Examples:
             status,
           },
           source: "elasticsearch",
-          note: `Filtered ${pageInfo.totalItems} properties. Page ${pageInfo.page} of ${pageInfo.totalPages}.`,
+          note: hasFilters
+            ? `Filtered to ${filterStats?.filteredCount} of ${filterStats?.totalCount} properties. Filters persisted for sharing.`
+            : `Sorted ${pageInfo.totalItems} properties. Page ${pageInfo.page} of ${pageInfo.totalPages}.`,
         },
         null,
         2,
@@ -380,11 +409,26 @@ Common MLS fields available:
       }
 
       // Filter to specific fields if requested
+      // Support both camelCase and PascalCase field names
       let propertyData = property;
       if (fields && fields.length > 0) {
+        // Create case-insensitive field lookup
+        const propertyKeys = Object.keys(property);
+        const keyMap = new Map<string, string>();
+        for (const key of propertyKeys) {
+          keyMap.set(key.toLowerCase(), key);
+        }
+
         propertyData = fields.reduce((acc: any, field: string) => {
+          // First try exact match
           if (property[field] !== undefined) {
             acc[field] = property[field];
+          } else {
+            // Then try case-insensitive match
+            const matchedKey = keyMap.get(field.toLowerCase());
+            if (matchedKey && property[matchedKey] !== undefined) {
+              acc[field] = property[matchedKey];
+            }
           }
           return acc;
         }, {});

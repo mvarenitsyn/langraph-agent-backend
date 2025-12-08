@@ -45,11 +45,17 @@ export async function commissionsNode(state: AgentStateType): Promise<Partial<Ag
     console.warn('[Commissions] ⚠️ User not authenticated - commissions require authentication');
   }
 
+  // Get searchId from state metadata
+  const searchId = state.metadata?.searchId;
+  console.log(`[Commissions] SearchId from state: ${searchId || 'NONE'}`);
+
   try {
     // Get commission tools
     const commissionRequestTool = globalToolsRegistry.getTool('commission_request');
     const commissionListTool = globalToolsRegistry.getTool('commission_list');
     const commissionUnreadCountTool = globalToolsRegistry.getTool('commission_unread_count');
+    // Also get property_get_details to get listing agent email before commission request
+    const propertyGetDetailsTool = globalToolsRegistry.getTool('property_get_details');
 
     if (!commissionRequestTool || !commissionListTool || !commissionUnreadCountTool) {
       const missing = [];
@@ -64,6 +70,14 @@ export async function commissionsNode(state: AgentStateType): Promise<Partial<Ag
       commissionListTool,
       commissionUnreadCountTool,
     ];
+
+    // Add property_get_details if available (needed to get listing agent email)
+    if (propertyGetDetailsTool) {
+      tools.push(propertyGetDetailsTool);
+      console.log('[Commissions] ✓ property_get_details tool added for agent email lookup');
+    } else {
+      console.warn('[Commissions] ⚠️ property_get_details not available - commission requests may fail without agent email');
+    }
 
     console.log(`[Commissions] ✓ Registered ${tools.length} tools: ${tools.map(t => t.name).join(', ')}`);
 
@@ -85,43 +99,55 @@ export async function commissionsNode(state: AgentStateType): Promise<Partial<Ag
 Commission requests require user authentication. All commission tools will fail unless the user is logged in.`;
     }
 
+    // Build search context if available
+    const searchContext = searchId
+      ? `\n**Current Search Session:**\n- searchId: "${searchId}"\n- Use this searchId when calling property_get_details`
+      : '\n**No active search session** - property_get_details may not work without a searchId';
+
     const instructions = `
 Your job: Use the available tools to help the user request and track commission information.
+${searchContext}
 
 **Available Tools:**
 
-1. **commission_request** - Request commission information from listing agent
-   - Parameters: listingKey (required), propertyAddress (required), message (optional)
-   - Use when: User wants to request commission info for a property
+1. **property_get_details** - Get property details including listing agent info
+   - Parameters: searchId (REQUIRED - use "${searchId || 'NO_SEARCH_ID'}"), listingKey (required)
+   - Returns: Property data WITH listing agent email, name, phone
+   - **IMPORTANT**: Use this FIRST before commission_request to get listingAgentEmail
 
-2. **commission_list** - List user's commission requests
+2. **commission_request** - Request commission information from listing agent
+   - Parameters: listingKey (required), propertyAddress (required), listingAgentEmail (required!), listingAgentName (optional), message (optional)
+   - Use when: User wants to request commission info for a property
+   - **IMPORTANT**: You MUST have listingAgentEmail before calling this!
+
+3. **commission_list** - List user's commission requests
    - Parameters: status (optional: pending/responded/declined), limit (optional)
    - Use when: User asks to see their commission requests
 
-3. **commission_unread_count** - Get count of unread commission responses
+4. **commission_unread_count** - Get count of unread commission responses
    - Parameters: none
    - Use when: User asks about new commission responses or updates
 
 **Tool Execution Strategy:**
 
-You can call tools in ANY ORDER based on the user's query. Common patterns:
+**⚠️ CRITICAL for commission_request:**
+You MUST call property_get_details FIRST to get the listing agent's email before calling commission_request.
 
-**Single tool**:
-- "request commission info for this property" → commission_request
+**Example workflow for commission request:**
+1. User: "request commission info for property 1234567"
+2. You: Call property_get_details(searchId: "${searchId || 'SEARCH_ID'}", listingKey: "1234567")
+3. Get: {listAgentEmail: "agent@example.com", listAgentFullName: "John Smith", address: "123 Main St"}
+4. You: Call commission_request(listingKey: "1234567", propertyAddress: "123 Main St", listingAgentEmail: "agent@example.com", listingAgentName: "John Smith")
+
+**Other patterns:**
 - "show my commission requests" → commission_list
 - "any commission updates?" → commission_unread_count
-
-**Sequential chain**:
-- "request commission and show me all my requests" →
-  commission_request → commission_list
-
-**Multiple iterations**:
-- "check for updates and show all pending requests" →
-  commission_unread_count → commission_list
+- "check for updates and show all pending requests" → commission_unread_count → commission_list
 
 **Critical Rules:**
 1. **ALWAYS USE TOOLS** - Don't just respond with text. Execute the appropriate tools.
 2. All tools require authentication (userId) - they will fail if user is not logged in
+3. **ALWAYS get property_get_details first** before calling commission_request
 3. For requesting commission, you need a listingKey and propertyAddress from property search results
 4. Commission requests are sent via email to listing agents - responses come back async
 5. Call tools as many times as needed to fully answer the user's query

@@ -1,8 +1,7 @@
 {
   "dependencies": ["."],
   "graphs": {
-    "agent": "./src/graph/index.ts:createAgentGraph",
-    "property_search_v2": "./src/subgraphs/property-search/graph.ts:createPropertySearchGraph"
+    "agent": "./src/graph/index.ts:createAgentGraph"
   },
   "env": ".env"
 }

@@ -48,6 +48,10 @@ export async function showingsNode(state: AgentStateType): Promise<Partial<Agent
     console.warn('[Showings] ⚠️ User not authenticated - showings require authentication');
   }
 
+  // Get searchId from state metadata
+  const searchId = state.metadata?.searchId;
+  console.log(`[Showings] SearchId from state: ${searchId || 'NONE'}`);
+
   try {
     // Get showing tools
     const showingCreateTool = globalToolsRegistry.getTool('showing_create');
@@ -55,6 +59,8 @@ export async function showingsNode(state: AgentStateType): Promise<Partial<Agent
     const showingGetTool = globalToolsRegistry.getTool('showing_get');
     const showingRescheduleTool = globalToolsRegistry.getTool('showing_reschedule');
     const showingCancelTool = globalToolsRegistry.getTool('showing_cancel');
+    // Also get property_get_details to get property address before showing creation
+    const propertyGetDetailsTool = globalToolsRegistry.getTool('property_get_details');
 
     if (!showingCreateTool || !showingListTool || !showingGetTool || !showingRescheduleTool || !showingCancelTool) {
       const missing = [];
@@ -73,6 +79,14 @@ export async function showingsNode(state: AgentStateType): Promise<Partial<Agent
       showingRescheduleTool,
       showingCancelTool,
     ];
+
+    // Add property_get_details if available (needed to get property address)
+    if (propertyGetDetailsTool) {
+      tools.push(propertyGetDetailsTool);
+      console.log('[Showings] ✓ property_get_details tool added for address lookup');
+    } else {
+      console.warn('[Showings] ⚠️ property_get_details not available - showing_create requires propertyAddress');
+    }
 
     console.log(`[Showings] ✓ Registered ${tools.length} tools: ${tools.map(t => t.name).join(', ')}`);
 
@@ -99,55 +113,69 @@ export async function showingsNode(state: AgentStateType): Promise<Partial<Agent
 Showings require user authentication. All showing tools will fail unless the user is logged in.`;
     }
 
+    // Build search context if available
+    const searchContext = searchId
+      ? `\n**Current Search Session:**\n- searchId: "${searchId}"\n- Use this searchId when calling property_get_details`
+      : '\n**No active search session** - property_get_details may not work without a searchId';
+
     const instructions = `
 Your job: Use the available tools to help the user schedule and manage property showings.
+${searchContext}
 
 **Available Tools:**
 
-1. **showing_create** - Create a showing request for a property
-   - Parameters: listingKey (required), preferredDate (required), preferredTimeSlot (optional), notes (optional)
-   - Use when: User wants to schedule a property showing or tour
+1. **property_get_details** - Get property details including address
+   - Parameters: searchId (REQUIRED - use "${searchId || 'NO_SEARCH_ID'}"), listingKey (required)
+   - Returns: Property data WITH address
+   - **IMPORTANT**: Use this FIRST before showing_create to get propertyAddress
 
-2. **showing_list** - List user's showing requests
-   - Parameters: status (optional: pending/confirmed/cancelled/completed), limit (optional)
+2. **showing_create** - Create a showing request for a property
+   - Parameters: listingKey (required), propertyAddress (required!), preferredDate (required), preferredTimeSlot (optional: morning/afternoon/evening), durationMinutes (optional, default 30), notes (optional)
+   - Use when: User wants to schedule a property showing or tour
+   - **IMPORTANT**: You MUST have propertyAddress before calling this!
+
+3. **showing_list** - List user's showing requests
+   - Parameters: status (optional: pending_owner_confirmation/pending_requester_confirmation/confirmed/suggested_reschedule/cancelled_by_requester/cancelled_by_owner/completed/expired), limit (optional)
    - Use when: User asks to see their showings
 
-3. **showing_get** - Get details for a specific showing
+4. **showing_get** - Get details for a specific showing
    - Parameters: showingId (required)
    - Use when: User wants to see showing details
 
-4. **showing_reschedule** - Request to reschedule a showing
-   - Parameters: showingId (required), newDate (required), newTimeSlot (optional), reason (optional)
+5. **showing_reschedule** - Request to reschedule a showing
+   - Parameters: showingId (required), newDate (required), newTimeSlot (optional: morning/afternoon/evening), durationMinutes (optional), reason (optional)
    - Use when: User wants to change showing date/time
 
-5. **showing_cancel** - Cancel a showing request
+6. **showing_cancel** - Cancel a showing request
    - Parameters: showingId (required), reason (optional)
    - Use when: User wants to cancel a showing
 
 **Tool Execution Strategy:**
 
-You can call tools in ANY ORDER based on the user's query. Common patterns:
+**⚠️ CRITICAL for showing_create:**
+You MUST call property_get_details FIRST to get the property address before calling showing_create.
 
-**Single tool**:
-- "schedule a showing for this property" → showing_create
+**Example workflow for scheduling a showing:**
+1. User: "schedule a showing for property 1234567 tomorrow afternoon"
+2. You: Call property_get_details(searchId: "${searchId || 'SEARCH_ID'}", listingKey: "1234567")
+3. Get: {address: "123 Main St, Miami, FL"}
+4. You: Call showing_create(listingKey: "1234567", propertyAddress: "123 Main St, Miami, FL", preferredDate: "tomorrow", preferredTimeSlot: "afternoon")
+
+**Other patterns:**
 - "show my showings" → showing_list
-
-**Sequential chain**:
 - "reschedule my showing to tomorrow" → showing_list (to find showing) → showing_reschedule
 - "cancel tomorrow's showing" → showing_list (to find showing) → showing_cancel
-
-**Multiple iterations**:
-- "show my showings and cancel the first one" →
-  showing_list → showing_cancel
+- "show my showings and cancel the first one" → showing_list → showing_cancel
 
 **Critical Rules:**
 1. **ALWAYS USE TOOLS** - Don't just respond with text. Execute the appropriate tools.
-2. For reschedule/cancel operations, you need the showingId - use showing_list first if needed
-3. All tools require authentication (userId) - they will fail if user is not logged in
-4. For creating showings, you need a listingKey from property search results
-5. Parse relative dates (tomorrow, next week) in tool implementations
-6. Call tools as many times as needed to fully answer the user's query
-7. Provide clear feedback about what was done
+2. **ALWAYS get property_get_details first** before calling showing_create
+3. For reschedule/cancel operations, you need the showingId - use showing_list first if needed
+4. All tools require authentication (userId) - they will fail if user is not logged in
+5. preferredDate accepts: "today", "tomorrow", "next week", "next monday", "2024-12-15", etc.
+6. preferredTimeSlot: "morning" (9am-12pm), "afternoon" (12pm-5pm), "evening" (5pm-8pm)
+7. Call tools as many times as needed to fully answer the user's query
+8. Provide clear feedback about what was done
 `;
 
     // Add platform-specific formatting instructions
