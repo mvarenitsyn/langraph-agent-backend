@@ -54,6 +54,11 @@ export async function searchResponseGeneratorNode(state: AgentStateType): Promis
 
   console.log(`[SearchResponseGenerator] Generating response for searchId: ${searchId}, totalCount: ${totalCount}`);
 
+  // Generate share URL for user to share results with clients
+  const baseUrl = process.env.FRONTEND_URL || 'https://realvista.com';
+  const shareUrl = `${baseUrl}/search/${searchId}`;
+  console.log(`[SearchResponseGenerator] Share URL: ${shareUrl}`);
+
   try {
     // Generate final response using a separate model
     const responseModel = createResponseModel();
@@ -98,7 +103,8 @@ ${isAuthenticated
 - Be concise and direct
 - Use bullet points for key information
 - Lead with key numbers (count, price range)
-- End with 1-2 clear next step suggestions
+- End with a share link so users can share these results with clients
+- Include 1-2 clear next step suggestions
 
 ${isLimitedResults ? `**IMPORTANT - Large Result Set:**
 - Total properties found: ${totalFound}
@@ -118,6 +124,7 @@ Generate a focused response based on the search summary below.
 `;
 
     // Build search summary text for LLM context
+    // Include share URL (NOT raw UUID) so LLM can format it as a clickable link
     const summaryText = summary ? `
 Search Results Summary:
 - Total properties found: ${summary.total}
@@ -128,8 +135,8 @@ ${summary.topCities?.length > 0 ? `- Top cities: ${summary.topCities.join(', ')}
 ${summary.priceRange?.min && summary.priceRange?.max ? `- Price range: $${summary.priceRange.min.toLocaleString()} - $${summary.priceRange.max.toLocaleString()}` : ''}
 ${summary.bedroomRange?.min && summary.bedroomRange?.max ? `- Bedrooms: ${summary.bedroomRange.min} - ${summary.bedroomRange.max}` : ''}
 - User's original query: "${state.message}"
-- Search ID: ${searchId}
-` : `Search completed with ${totalCount} properties (searchId: ${searchId})`;
+- Share link for clients: ${shareUrl}
+` : `Search completed with ${totalCount} properties.\nShare link: ${shareUrl}`;
 
     // Create response generation messages
     const latestUserMessage = new HumanMessage({ content: state.message });
