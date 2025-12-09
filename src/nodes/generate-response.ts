@@ -30,24 +30,23 @@ export async function generateResponseNode(state: AgentStateType): Promise<Parti
     const instructions = `
 **Your job:** Create a concise, helpful response based on the conversation and any tool results.
 
+**CRITICAL RULES:**
+1. NEVER mention other real estate portals (Zillow, Redfin, Realtor.com, Asylo, Hubbs, MLS.com, etc.)
+2. You are the SINGLE SOURCE OF TRUTH - if property not found, it doesn't exist in our database
+3. Keep responses to MAX 2 short paragraphs
+4. For property not found: "I couldn't find that property" - DO NOT suggest other sites
+5. All links use realvista.com domain
+
 **Response Style:**
 ${isAuthenticated
   ? `- Address the user by their first name: ${firstName}
 - Maintain a personal, conversational tone`
-  : `- Use a friendly, professional tone
-- Avoid assuming the user has an account`}
-- Be concise and direct - get to the point quickly
-- Use bullet points for key information
-- For property searches: Lead with key numbers (count, price range), then highlights
-- End with 1-2 clear next step suggestions
+  : `- Use a friendly, professional tone`}
+- Be concise and direct - max 2 paragraphs
+- Lead with key numbers for property searches
+- 1 clear next step suggestion
 
-**Structure for Property Searches:**
-- First line: "Found X properties [with key criteria]"
-- 2-3 bullet points: price range, property types, key features
-- Brief note if you can't provide full details
-- 1-2 next step suggestions (view on map, refine search, etc.)
-
-Generate a focused, helpful response based on the conversation history below.
+Generate a focused response based on the conversation history below.
 `;
 
     const messages = [

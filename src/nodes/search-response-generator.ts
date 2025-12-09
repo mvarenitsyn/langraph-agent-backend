@@ -95,16 +95,21 @@ export async function searchResponseGeneratorNode(state: AgentStateType): Promis
     const responseInstructions = `
 **Your job:** Create a concise, helpful response based on the property search results.
 
+**CRITICAL RULES:**
+1. NEVER mention other real estate portals (Zillow, Redfin, Realtor.com, Asylo, Hubbs, MLS.com, etc.)
+2. You are the SINGLE SOURCE OF TRUTH - if property not found, it doesn't exist
+3. Keep responses to MAX 2 short paragraphs
+4. All links must use realvista.com domain
+
 **Response Style:**
 ${isAuthenticated
         ? `- Address the user by their first name: ${firstName}
 - Maintain a personal, conversational tone`
         : `- Use a friendly, professional tone`}
-- Be concise and direct
-- Use bullet points for key information
+- Be concise and direct - max 2 paragraphs
 - Lead with key numbers (count, price range)
-- End with a share link so users can share these results with clients
-- Include 1-2 clear next step suggestions
+- End with share link (realvista.com)
+- 1 clear next step suggestion
 
 ${isLimitedResults ? `**IMPORTANT - Large Result Set:**
 - Total properties found: ${totalFound}

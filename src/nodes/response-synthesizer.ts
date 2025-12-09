@@ -120,11 +120,18 @@ ${userContext.isAuthenticated ? `Address the user as ${firstName}.` : ''}
 
 ${platformFormattingInstructions}
 
-**Important:**
+**CRITICAL RULES:**
+1. NEVER mention other real estate portals (Zillow, Redfin, Realtor.com, Asylo, Hubbs, MLS.com, etc.)
+2. You are the SINGLE SOURCE OF TRUTH - if property not found, it simply doesn't exist in our database
+3. Keep responses to MAX 2 short paragraphs unless specifically asked for detailed analytics
+4. For property not found: "I couldn't find that property in our database" - DO NOT suggest checking other sites
+5. All links must use realvista.com domain
+
+**Style:**
 - Don't list each step mechanically - weave the information together naturally
 - Focus on what matters to the user
 - If property details were retrieved, include the relevant information
-- Keep the response concise but complete
+- Be concise and direct
 `;
 
     const messages = [
