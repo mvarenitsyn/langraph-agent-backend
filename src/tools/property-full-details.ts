@@ -13,17 +13,20 @@ import { Pool } from "pg";
 
 export const propertyGetFullDetailsTool = new DynamicStructuredTool({
   name: "property_get_full_details",
-  description: `Fetch complete property details including full MLS data for a single property.
+  description: `Fetch complete property details including full MLS data for a single property by ListingKey.
 
 ⚠️ IMPORTANT: Use this tool ONLY when:
 - User explicitly requests full property details
 - User clicks on a property to view details
 - Frontend requests complete property information
+- You already have the ListingKey from a prior search
 
 This tool fetches the full 50KB raw MLS JSON data and should NOT be used for:
 - Search results (use property_search or property_get_results instead)
 - Bulk property information
 - Listing comparisons (unless user explicitly requests full details)
+
+For address-based lookups, use property_search first to find the ListingKey.
 
 The response includes:
 - All normalized columns (address, price, beds, baths, etc.)
@@ -33,35 +36,27 @@ The response includes:
 Example use cases:
 1. "Show me full details for listing ABC123"
 2. User clicks property card → fetch full details
-3. "What's the full description for this property?"
-4. "Details for 123 Ocean Drive, Miami Beach"`,
+3. "What's the full description for this property?"`,
 
   schema: z.object({
     listingKey: z
       .string()
-      .optional()
       .describe(
-        "The ListingKey/MLS number of the property (e.g., 'A11696203', 'RX-11030975')",
-      ),
-    address: z
-      .string()
-      .optional()
-      .describe(
-        "Property address for lookup (e.g., '123 Ocean Drive, Miami Beach'). Use when listingKey is not known.",
+        "The ListingKey/MLS number of the property (e.g., 'A11696203', 'RX-11030975'). Required.",
       ),
   }),
 
-  func: async ({ listingKey, address }, config) => {
+  func: async ({ listingKey }, config) => {
     console.log(
-      `[PropertyGetFullDetailsTool] Fetching full details for listingKey: ${listingKey || 'not provided'}, address: ${address || 'not provided'}`,
+      `[PropertyGetFullDetailsTool] Fetching full details for listingKey: ${listingKey}`,
     );
 
-    if (!listingKey && !address) {
+    if (!listingKey) {
       return JSON.stringify(
         {
           success: false,
-          error: "Either listingKey or address must be provided",
-          suggestion: "Provide a listingKey (e.g., 'A11696203') or an address (e.g., '123 Ocean Drive, Miami Beach')",
+          error: "listingKey is required",
+          suggestion: "Use property_search first to find the ListingKey, then call this tool with that ListingKey",
         },
         null,
         2,
@@ -80,78 +75,40 @@ Example use cases:
 
       const start = Date.now();
 
-      let result;
-
-      if (listingKey) {
-        // Direct lookup by listingKey (fast, indexed)
-        result = await pool.query(
-          `
-          SELECT
-            tp.listing_key,
-            tp.unparsed_address,
-            tp.city,
-            tp.state_or_province as state,
-            tp.postal_code,
-            tp.list_price,
-            tp.bedrooms_total,
-            tp.bathrooms_total_integer as bathrooms_total,
-            tp.living_area,
-            tp.standard_status,
-            tp.property_type,
-            tp.property_sub_type,
-            tp.year_built,
-            tp.latitude,
-            tp.longitude,
-            tp.raw_data
-          FROM trestle_properties tp
-          WHERE tp.listing_key = $1
-        `,
-          [listingKey],
-        );
-      } else {
-        // Address-based lookup using full-text search
-        console.log(`[PropertyGetFullDetailsTool] Searching by address: ${address}`);
-        result = await pool.query(
-          `
-          SELECT
-            tp.listing_key,
-            tp.unparsed_address,
-            tp.city,
-            tp.state_or_province as state,
-            tp.postal_code,
-            tp.list_price,
-            tp.bedrooms_total,
-            tp.bathrooms_total_integer as bathrooms_total,
-            tp.living_area,
-            tp.standard_status,
-            tp.property_type,
-            tp.property_sub_type,
-            tp.year_built,
-            tp.latitude,
-            tp.longitude,
-            tp.raw_data,
-            similarity(LOWER(unparsed_address), LOWER($1)) as addr_sim
-          FROM trestle_properties tp
-          WHERE LOWER(unparsed_address) LIKE '%' || LOWER($1) || '%'
-             OR similarity(LOWER(unparsed_address), LOWER($1)) > 0.3
-          ORDER BY addr_sim DESC
-          LIMIT 1
-        `,
-          [address],
-        );
-      }
+      // Direct lookup by listingKey (fast, indexed ~50ms)
+      const result = await pool.query(
+        `
+        SELECT
+          tp.listing_key,
+          tp.unparsed_address,
+          tp.city,
+          tp.state_or_province as state,
+          tp.postal_code,
+          tp.list_price,
+          tp.bedrooms_total,
+          tp.bathrooms_total_integer as bathrooms_total,
+          tp.living_area,
+          tp.standard_status,
+          tp.property_type,
+          tp.property_sub_type,
+          tp.year_built,
+          tp.latitude,
+          tp.longitude,
+          tp.raw_data
+        FROM trestle_properties tp
+        WHERE tp.listing_key = $1
+      `,
+        [listingKey],
+      );
 
       const fetchTime = Date.now() - start;
 
       if (result.rows.length === 0) {
-        const searchParam = listingKey ? `ListingKey: ${listingKey}` : `address: ${address}`;
         return JSON.stringify(
           {
             success: false,
-            error: `Property not found with ${searchParam}`,
-            suggestion: listingKey
-              ? "Check the ListingKey and try again, or use property_search to find properties"
-              : "Try a more specific address with unit number, or use property_search to find similar properties",
+            error: `Property not found with ListingKey: ${listingKey}`,
+            suggestion: "Check the ListingKey and try again, or use property_search to find properties by address",
           },
           null,
           2,
