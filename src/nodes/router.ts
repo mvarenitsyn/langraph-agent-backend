@@ -226,6 +226,10 @@ ${searchContext}
 **NO ACTIVE SEARCH (user hasn't searched yet):**
 - "find 3BR in Miami" → 1 task: PROPERTY_SEARCH
 - "get agent details for property 123" → 2 tasks: PROPERTY_SEARCH (find property), then PROPERTY_OPERATIONS (get details)
+- "get listing agent for 3101 Bayshore Drive" → 2 tasks: PROPERTY_SEARCH (find by address), then PROPERTY_OPERATIONS (get agent info)
+- "who is the agent for 123 Ocean Drive" → 2 tasks: PROPERTY_SEARCH (find by address), then PROPERTY_OPERATIONS (get details)
+- "details for property at 500 Brickell Ave" → 2 tasks: PROPERTY_SEARCH (find by address), then PROPERTY_OPERATIONS (get full details)
+- "get me info about the house on Palm Island" → 2 tasks: PROPERTY_SEARCH (find by address), then PROPERTY_OPERATIONS (get details)
 - "schedule showing for a condo in Brickell" → 3 tasks: PROPERTY_SEARCH, PROPERTY_OPERATIONS (identify), SHOWINGS
 
 **WITH ACTIVE SEARCH (user has search results):**
