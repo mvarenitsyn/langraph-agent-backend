@@ -15,15 +15,16 @@ import { buildFormattingInstructions, adaptMarkdown, truncateResponse } from "..
  * This node is a specialized mini-agent that combines property operation tools:
  * 1. property_filter_sort - Filter/sort existing search results with JavaScript
  * 2. property_get_results - Retrieve search results by searchId
- * 3. property_get_details - Get detailed information about a specific property
- * 4. cma_generate - Generate a Comparative Market Analysis report for a property
- * 5. cma_history - Get the user's CMA report history
- * 6. property_discover_fields - Discover available MLS fields in search results
- * 7. property_analyze - Run analysis code on properties in secure sandbox
- * 8. property_query - Query properties with custom filter/sort logic
+ * 3. property_get_details - Get detailed information about a specific property (requires searchId)
+ * 4. property_get_full_details - Direct property lookup by address (NO searchId required!)
+ * 5. cma_generate - Generate a Comparative Market Analysis report for a property
+ * 6. cma_history - Get the user's CMA report history
+ * 7. property_discover_fields - Discover available MLS fields in search results
+ * 8. property_analyze - Run analysis code on properties in secure sandbox
+ * 9. property_query - Query properties with custom filter/sort logic
  *
  * Flow:
- * - Uses LLM with 8 tools bound
+ * - Uses LLM with 9 tools bound
  * - LLM decides which tools to call, in what order, and how many times
  * - Can execute tools in parallel or sequential chains
  * - Generates final response after tool execution completes
@@ -99,6 +100,12 @@ export async function propertyOperationsNode(state: AgentStateType): Promise<Par
     const discoverFieldsTool = globalToolsRegistry.getTool('property_discover_fields');
     const analyzeTool = globalToolsRegistry.getTool('property_analyze');
     const queryTool = globalToolsRegistry.getTool('property_query');
+
+    // Get property_get_full_details tool for address-based lookups (no searchId required)
+    const getFullDetailsTool = globalToolsRegistry.getTool('property_get_full_details');
+    if (!getFullDetailsTool) {
+      console.warn('[PropertyOperations] ⚠️ property_get_full_details tool not found - direct address lookup disabled');
+    }
 
     // Sandbox tools are optional - warn if not found but don't fail
     if (!discoverFieldsTool) {
@@ -266,6 +273,14 @@ export async function propertyOperationsNode(state: AgentStateType): Promise<Par
       );
     }
 
+    // Add property_get_full_details tool (no searchId required - direct PostgreSQL lookup)
+    // This tool can look up properties by address without needing a prior search
+    if (getFullDetailsTool) {
+      // Cast to any since this tool doesn't have searchId in schema (intentionally)
+      wrappedTools.push(getFullDetailsTool as any);  // No wrapping needed - doesn't require searchId
+      console.log('[PropertyOperations] ✓ property_get_full_details tool added for direct address lookup');
+    }
+
     console.log('[PropertyOperations] ✓ Tools wrapped:', wrappedTools.map(t => t.name).join(', '));
 
     // Filter tools based on platform capabilities
@@ -319,13 +334,22 @@ You do NOT need to specify searchId when calling property tools - it's auto-inje
    - Parameters: No parameters needed (includeFiltered optional)
    - Returns: List of properties from the active search
 
-3. **property_get_details** - Get full details for a specific property
-   - Use when: User asks about a specific property
+3. **property_get_details** - Get full details for a property from search results
+   - Use when: User asks about a specific property FROM SEARCH RESULTS
    - Parameters: Just provide listingKey OR address
    - Returns: Complete property information (all 50+ MLS fields)
-   - Examples: "tell me about 123 Main St", "details on the first property"
+   - **REQUIRES**: Active search session (searchId)
+   - Examples: "details on the first property", "tell me about listing A12345"
 
-4. **cma_generate** - Generate a Comparative Market Analysis (CMA) report
+4. **property_get_full_details** - Direct property lookup by address (NO searchId needed!)
+   - Use when: User provides a specific address WITHOUT having done a search first
+   - Parameters: listingKey OR address (address preferred for direct lookup)
+   - Returns: Full MLS data including listing agent info, photos, remarks, etc.
+   - **DOES NOT REQUIRE searchId** - queries PostgreSQL directly
+   - Examples: "get me the listing agent for 3101 Bayshore Drive", "details for 123 Ocean Ave"
+   - **USE THIS TOOL when there's no active search session and user provides an address**
+
+5. **cma_generate** - Generate a Comparative Market Analysis (CMA) report
    - Use when: User asks for property valuation, CMA, price analysis, or investment analysis
    - **REQUIRED**: listingKey from search results (from property_get_results)
    - Optional: enableAIInsights (default: true), maxComps (default: 10), radiusMiles (default: 3)
@@ -333,22 +357,22 @@ You do NOT need to specify searchId when calling property tools - it's auto-inje
    - Returns: Estimated value, price range, comparable sales, confidence score, AI insights
    - **NOTE**: Takes 30-90 seconds to generate - be patient!
 
-5. **cma_history** - Get user's past CMA reports
+6. **cma_history** - Get user's past CMA reports
    - Use when: User asks to see previous valuations or CMA history
    - Parameters: limit (default: 10), offset (default: 0)
 
-6. **property_discover_fields** - Discover all available fields in property data
+7. **property_discover_fields** - Discover all available fields in property data
    - Use when: User asks "what fields exist?", "what data is available?", "show me pool fields"
    - Parameters: filter (optional regex for field names), categorize (group by category)
    - Returns: Field names, types, presence rates, sample values
 
-7. **property_analyze** - Run analysis code on property data in secure sandbox
+8. **property_analyze** - Run analysis code on property data in secure sandbox
    - Use when: User asks for aggregations, statistics, or custom calculations
    - Parameters: code (JavaScript expression)
    - Available helpers: sum(field), avg(field), min(field), max(field), groupBy(field), countBy(field), unique(field)
    - Examples: "avg('ListPrice')", "countBy('City')", "({ min: min('ListPrice'), max: max('ListPrice') })"
 
-8. **property_query** - Query properties with custom JavaScript filter/sort logic
+9. **property_query** - Query properties with custom JavaScript filter/sort logic
    - Use when: Complex multi-condition filtering or computed comparisons
    - Parameters: filterCode (boolean expression with 'p' as property), sortCode (optional comparison with 'a' and 'b')
    - Examples: "p.BedroomsTotal >= 3 && p.PoolYN && p.ListPrice < 800000"
@@ -359,6 +383,10 @@ You can call tools in ANY ORDER based on the user's query. Common patterns:
 
 **Single tool**:
 - "filter to under $500k" → property_filter_sort
+
+**Direct address lookup (no prior search)**:
+- "get me the listing agent for 3101 Bayshore Drive" → property_get_full_details (with address)
+- "details for 123 Ocean Ave" → property_get_full_details (with address)
 
 **Sequential chain**:
 - "filter to 3BR and show me the cheapest" → property_filter_sort → property_get_results → property_get_details
@@ -376,11 +404,13 @@ You can call tools in ANY ORDER based on the user's query. Common patterns:
 1. **ALWAYS USE TOOLS** - Don't just respond with text. The user expects tools to be executed.
 2. If searchId is available (shown above), you MUST use property_filter_sort or property_get_results
 3. For property_get_details, you need BOTH searchId AND (listingKey OR address)
-4. Use property_get_results first if you need to see what properties are available
-5. For **CMA/valuation requests**, you MUST call cma_generate tool - do NOT generate estimates from your own reasoning!
-6. cma_generate requires a listingKey - get it from property_get_results first if needed
-7. Call tools as many times as needed to fully answer the user's query
-8. Don't apologize about missing data - just call the tools to get it!
+4. **IF NO SEARCHID but user provides an address** → Use **property_get_full_details** instead!
+   - Example: "get me the listing agent for 3101 Bayshore Drive" → property_get_full_details
+5. Use property_get_results first if you need to see what properties are available
+6. For **CMA/valuation requests**, you MUST call cma_generate tool - do NOT generate estimates from your own reasoning!
+7. cma_generate requires a listingKey - get it from property_get_results first if needed
+8. Call tools as many times as needed to fully answer the user's query
+9. Don't apologize about missing data - just call the tools to get it!
 
 **Available Property Fields:**
 - Basic: ListingKey, UnparsedAddress, ListPrice, BedroomsTotal, BathroomsTotalInteger
