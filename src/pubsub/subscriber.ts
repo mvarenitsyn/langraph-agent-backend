@@ -101,7 +101,8 @@ export class AgentSubscriber {
       const userContext = payload?.userContext || TEST_FALLBACKS.userContext;
 
       const correlationId = metadata?.correlationId || `task-${Date.now()}`;
-      const query = payload?.query || payload?.parameters?.query;
+      // Support both 'query' and 'message' field names for compatibility
+      const query = payload?.query || payload?.message || payload?.parameters?.query;
       // Only use explicit searchId from payload (no fallback to prevent incorrect routing)
       const searchId = payload?.searchId || payload?.parameters?.searchId;
 

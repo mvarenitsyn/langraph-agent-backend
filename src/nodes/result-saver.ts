@@ -4,7 +4,7 @@ import { saveSearchResults, SearchSummary, initializeSearchResultsTables } from 
 import { MappedQuery } from '../subgraphs/property-search/types/mapped-query.js';
 import { sharedPublisher } from '../pubsub/shared.js';
 import { uiEventPublisher } from '../pubsub/ui-event-publisher.js';
-import { getPlatformContext, shouldPublishUIEvents } from '../utils/platformContext.js';
+import { getPlatformContext, shouldPublishUIEventsForTask } from '../utils/platformContext.js';
 
 // Track if tables have been initialized
 let tablesInitialized = false;
@@ -107,8 +107,9 @@ export async function resultSaverNode(state: AgentStateType): Promise<Partial<Ag
 
     // ⚡ IMMEDIATE UI UPDATE: Publish searchId to frontend right after save
     // This allows frontend to fetch and display properties while response is being generated
+    // Note: UI events are only published for the LAST task in multi-step workflows
     const platformContext = getPlatformContext(state);
-    if (searchId && summary.total > 0 && shouldPublishUIEvents(platformContext)) {
+    if (searchId && summary.total > 0 && shouldPublishUIEventsForTask(platformContext, state)) {
       try {
         console.log(`[ResultSaver] 📡 Publishing searchId to frontend IMMEDIATELY (${summary.total} properties)`);
 

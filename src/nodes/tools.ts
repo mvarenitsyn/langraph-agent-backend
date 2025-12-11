@@ -3,6 +3,7 @@ import { ToolMessage } from "@langchain/core/messages";
 import { globalToolsRegistry } from "../tools/registry.js";
 import { AgentState } from "../types/state.js";
 import { uiEventPublisher } from "../pubsub/ui-event-publisher.js";
+import { isLastTask } from "../utils/platformContext.js";
 
 /**
  * Tools Node - Executes tool calls from the LLM with session context
@@ -53,7 +54,7 @@ export function createToolsNode() {
 
       if (lastMessage && 'type' in lastMessage && lastMessage.type === 'tool') {
         const toolMessage = lastMessage as ToolMessage;
-        await emitUIEventsForTool(toolMessage, sessionId, userId, correlationId);
+        await emitUIEventsForTool(toolMessage, sessionId, userId, correlationId, state.metadata);
       }
     }
 
@@ -63,15 +64,25 @@ export function createToolsNode() {
 
 /**
  * Emit UI render events based on tool execution results
+ * Note: UI events are suppressed for non-last tasks in multi-step workflows
  */
 async function emitUIEventsForTool(
   toolMessage: ToolMessage,
   sessionId: string | undefined,
   userId: string | undefined,
-  correlationId: string
+  correlationId: string,
+  metadata?: Record<string, any>
 ): Promise<void> {
   if (!sessionId) {
     console.log('[ToolsNode] Skipping UI event emission - no sessionId');
+    return;
+  }
+
+  // Check if this is not the last task in a multi-step workflow
+  if (!isLastTask({ metadata })) {
+    const taskNumber = metadata?.taskNumber ?? 1;
+    const totalTasks = metadata?.totalTasks ?? 1;
+    console.log(`[ToolsNode] 🔇 Suppressing UI events (task ${taskNumber}/${totalTasks})`);
     return;
   }
 

@@ -3,6 +3,7 @@ import { AgentStateType } from "../types/state.js";
 import { globalToolsRegistry } from "../tools/registry.js";
 import { createToolCallingModel, createResponseModel } from "../models/openai.js";
 import { uiEventPublisher } from "../pubsub/ui-event-publisher.js";
+import { isLastTask } from "../utils/platformContext.js";
 
 /**
  * Property Filter/Sort Node - Mini Agent with Tool Loop
@@ -205,8 +206,9 @@ Generate a focused response based on the tool results below.
     console.log('[PropertyFilterSort] ✓ Response generated');
 
     // Publish UI render event if we have filtered results
+    // Note: UI events are suppressed for non-last tasks in multi-step workflows
     const filterSortResult = toolResults?.['property_filter_sort'];
-    if (filterSortResult) {
+    if (filterSortResult && isLastTask(state)) {
       try {
         const result = JSON.parse(filterSortResult);
         if (result.success && result.data?.totalCount !== undefined && result.data?.searchId) {

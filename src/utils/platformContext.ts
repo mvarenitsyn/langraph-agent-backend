@@ -116,3 +116,54 @@ export function getPlatformContext(
   // Otherwise, resolve from metadata
   return resolvePlatformContext(state.metadata);
 }
+
+/**
+ * Check if current task is the last task in a multi-step workflow
+ *
+ * Returns true if:
+ * - It's a single-task workflow (totalTasks <= 1)
+ * - It's the last task (taskNumber === totalTasks)
+ *
+ * @param state - Agent state with metadata containing taskNumber and totalTasks
+ * @returns true if this is the last (or only) task
+ */
+export function isLastTask(
+  state: { metadata?: Record<string, any> }
+): boolean {
+  const taskNumber = state.metadata?.taskNumber ?? 1;
+  const totalTasks = state.metadata?.totalTasks ?? 1;
+
+  // Single task or last task
+  return totalTasks <= 1 || taskNumber === totalTasks;
+}
+
+/**
+ * Check if UI events should be published for the current task
+ *
+ * Combines platform capability check with last-task check.
+ * UI events are only published for the last task in multi-step workflows
+ * to avoid showing intermediate results that may confuse the user.
+ *
+ * @param platformContext - Platform context (for capability check)
+ * @param state - Agent state (for task number check)
+ * @returns true if UI events should be published
+ */
+export function shouldPublishUIEventsForTask(
+  platformContext: PlatformContext,
+  state: { metadata?: Record<string, any> }
+): boolean {
+  // First check platform capability
+  if (!shouldPublishUIEvents(platformContext)) {
+    return false;
+  }
+
+  // Then check if this is the last task
+  if (!isLastTask(state)) {
+    const taskNumber = state.metadata?.taskNumber ?? 1;
+    const totalTasks = state.metadata?.totalTasks ?? 1;
+    console.log(`[PlatformContext] 🔇 Suppressing UI events (task ${taskNumber}/${totalTasks})`);
+    return false;
+  }
+
+  return true;
+}
