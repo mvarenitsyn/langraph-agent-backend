@@ -104,6 +104,7 @@ function buildRoutingFlags(route: RouteType): Record<string, boolean> {
     shouldSearchProperties: false,
     shouldFilterProperties: false,
     shouldUsePropertyOperations: false,
+    shouldUseImageSimilarity: false,
     shouldSearchPerplexity: false,
     shouldUseCollections: false,
     shouldUseShowings: false,
@@ -120,6 +121,9 @@ function buildRoutingFlags(route: RouteType): Record<string, boolean> {
       break;
     case 'PROPERTY_FILTER':
       flags.shouldFilterProperties = true;
+      break;
+    case 'IMAGE_SIMILARITY_SEARCH':
+      flags.shouldUseImageSimilarity = true;
       break;
     case 'PERPLEXITY_SEARCH':
       flags.shouldSearchPerplexity = true;
@@ -152,6 +156,8 @@ function getProgressEmoji(route: RouteType): string {
       return '📋';
     case 'PROPERTY_FILTER':
       return '🔧';
+    case 'IMAGE_SIMILARITY_SEARCH':
+      return '🖼️';
     case 'PERPLEXITY_SEARCH':
       return '🌐';
     case 'COLLECTIONS':
@@ -176,6 +182,8 @@ function getProgressDescription(route: RouteType): string {
       return 'Processing property data...';
     case 'PROPERTY_FILTER':
       return 'Filtering results...';
+    case 'IMAGE_SIMILARITY_SEARCH':
+      return 'Finding similar rooms...';
     case 'PERPLEXITY_SEARCH':
       return 'Researching information...';
     case 'COLLECTIONS':

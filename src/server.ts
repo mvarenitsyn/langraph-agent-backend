@@ -1,5 +1,6 @@
 import express, { Request, Response } from 'express';
 import { HumanMessage } from "@langchain/core/messages";
+import { Command } from "@langchain/langgraph";
 import { randomUUID } from 'crypto';
 import { config, validateConfig } from './config/index.js';
 import { initializeTools } from './tools/index.js';
@@ -141,15 +142,30 @@ app.post('/chat', async (req: Request, res: Response) => {
 });
 
 /**
- * Non-streaming chat endpoint
+ * Non-streaming chat endpoint with human-in-the-loop support
+ *
+ * Supports:
+ * - Regular messages: { message: "Find 2br in Miami", threadId: "..." }
+ * - Resume from interrupt: { resume: "rent", threadId: "..." }
+ *
+ * Returns:
+ * - 200 OK: Normal completion with response
+ * - 202 Accepted: Graph interrupted, waiting for user input
+ * - 400 Bad Request: Invalid request
+ * - 500 Server Error: Execution error
  */
 app.post('/chat/simple', async (req: Request, res: Response) => {
-  // Support both 'message' (new) and 'query' (backward compatibility)
-  const { message, query, threadId = 'default-thread', metadata: clientMetadata, platform = 'web' } = req.body;
+  const { message, query, threadId = 'default-thread', metadata: clientMetadata, platform = 'web', resume, imageAttachment } = req.body;
   const userMessage = message || query;
 
-  if (!userMessage) {
-    res.status(400).json({ error: 'Message is required' });
+  // Log image attachment if present
+  if (imageAttachment) {
+    console.log(`[Server] 🖼️ Image attachment: ${imageAttachment.filename || 'unnamed'}, ${(imageAttachment.sizeBytes / 1024).toFixed(1)}KB`);
+  }
+
+  // Either message or resume is required
+  if (!userMessage && resume === undefined) {
+    res.status(400).json({ error: 'Message or resume value is required' });
     return;
   }
 
@@ -161,26 +177,68 @@ app.post('/chat/simple', async (req: Request, res: Response) => {
     const platformContext = resolvePlatformContext({ platform: platform as PlatformType });
     console.log(`[Server] Platform: ${platformContext.platform}`);
 
-    // Note: Only pass fields that need to be set for this turn
-    // LangGraph will automatically load messages from checkpoint
-    const result = await graph.invoke(
-      {
-        message: userMessage,
-        // Don't reset messages - let LangGraph load from checkpoint
-        toolResults: {},
-        metadata: {
-          sessionId: threadId,
-          userId: req.body.userId, // Optional: can be passed from client
-          correlationId: randomUUID(),
-          platform: platformContext.platform,
-          // Merge client-provided metadata (e.g., searchId for testing)
-          ...(clientMetadata || {}),
-        },
-        platformContext,
-      },
-      configurable
-    );
+    let result: any;
 
+    // Check if this is a resume request (continuing from interrupt)
+    if (resume !== undefined) {
+      console.log(`[Server] 🔄 Resuming thread ${threadId} with value: "${resume}"`);
+
+      // Resume the interrupted graph with the user's response
+      // Command(resume=value) tells LangGraph to continue from where it paused
+      result = await graph.invoke(
+        new Command({ resume }),
+        configurable
+      );
+    } else {
+      // Regular message - start new turn
+      console.log(`[Server] 📝 New message for thread ${threadId}: "${userMessage}"`);
+
+      // Note: Only pass fields that need to be set for this turn
+      // LangGraph will automatically load messages from checkpoint
+      result = await graph.invoke(
+        {
+          message: userMessage,
+          // Don't reset messages - let LangGraph load from checkpoint
+          toolResults: {},
+          metadata: {
+            sessionId: threadId,
+            userId: req.body.userId, // Optional: can be passed from client
+            correlationId: randomUUID(),
+            platform: platformContext.platform,
+            // Merge client-provided metadata (e.g., searchId for testing)
+            ...(clientMetadata || {}),
+          },
+          platformContext,
+          // Pass image attachment for similarity search
+          imageAttachment: imageAttachment || null,
+        },
+        configurable
+      );
+    }
+
+    // Check if graph was interrupted (human-in-the-loop)
+    // LangGraph sets result.__interrupt__ when interrupt() is called
+    if (result && (result as any).__interrupt__) {
+      const interrupts = (result as any).__interrupt__;
+      const interruptInfo = interrupts[0]; // Get first interrupt
+
+      console.log(`[Server] ⏸️  Graph interrupted: ${interruptInfo.value?.type || 'unknown'}`);
+      console.log(`[Server]    Question: "${interruptInfo.value?.question || 'N/A'}"`);
+
+      // Return 202 Accepted with interrupt details
+      // Client should display the question and resume with user's response
+      res.status(202).json({
+        status: 'interrupted',
+        interrupt: interruptInfo.value,
+        threadId,
+        message: interruptInfo.value?.question || 'User input required',
+        options: interruptInfo.value?.options,
+        metadata: interruptInfo.value?.metadata,
+      });
+      return;
+    }
+
+    // Normal completion
     res.json({
       success: true,
       response: result.finalResponse,

@@ -18,6 +18,7 @@ import { perplexitySearchNode } from "../nodes/perplexity-search.js";
 import { collectionsNode } from "../nodes/collections.js";
 import { showingsNode } from "../nodes/showings.js";
 import { commissionsNode } from "../nodes/commissions.js";
+import { imageSimilaritySearchNode } from "../nodes/image-similarity-search.js";
 import { createCheckpointer } from "../checkpointer/index.js";
 import { initializeTools } from "../tools/index.js";
 
@@ -41,6 +42,7 @@ initializeTools();
  * - PROPERTY_SEARCH → query_mapper → search_executor → deduplicator → result_saver → search_response_generator
  * - PROPERTY_OPERATIONS → property_operations
  * - PROPERTY_FILTER → property_filter_sort (LEGACY)
+ * - IMAGE_SIMILARITY_SEARCH → image_similarity_search
  * - PERPLEXITY_SEARCH → perplexity_search
  * - COLLECTIONS → collections
  * - SHOWINGS → showings
@@ -88,6 +90,7 @@ function routeFromTaskExecutor(state: typeof AgentState.State) {
   const shouldSearchProperties = state.metadata?.shouldSearchProperties || false;
   const shouldFilterProperties = state.metadata?.shouldFilterProperties || false;
   const shouldUsePropertyOperations = state.metadata?.shouldUsePropertyOperations || false;
+  const shouldUseImageSimilarity = state.metadata?.shouldUseImageSimilarity || false;
   const shouldSearchPerplexity = state.metadata?.shouldSearchPerplexity || false;
   const shouldUseCollections = state.metadata?.shouldUseCollections || false;
   const shouldUseShowings = state.metadata?.shouldUseShowings || false;
@@ -106,6 +109,11 @@ function routeFromTaskExecutor(state: typeof AgentState.State) {
   if (shouldFilterProperties) {
     console.log(`[Graph] Task executor routing to property_filter_sort (legacy)`);
     return "property_filter_sort";
+  }
+
+  if (shouldUseImageSimilarity) {
+    console.log(`[Graph] Task executor routing to image_similarity_search`);
+    return "image_similarity_search";
   }
 
   if (shouldSearchPerplexity) {
@@ -183,6 +191,7 @@ export async function createAgentGraph() {
     .addNode("collections", collectionsNode)
     .addNode("showings", showingsNode)
     .addNode("commissions", commissionsNode)
+    .addNode("image_similarity_search", imageSimilaritySearchNode)
 
     // ========== EDGES ==========
 
@@ -204,6 +213,7 @@ export async function createAgentGraph() {
         "query_mapper",
         "property_filter_sort",
         "property_operations",
+        "image_similarity_search",
         "perplexity_search",
         "collections",
         "showings",
@@ -222,6 +232,7 @@ export async function createAgentGraph() {
     // All other route nodes → task_complete
     .addEdge("property_filter_sort", "task_complete")
     .addEdge("property_operations", "task_complete")
+    .addEdge("image_similarity_search", "task_complete")
     .addEdge("perplexity_search", "task_complete")
     .addEdge("collections", "task_complete")
     .addEdge("showings", "task_complete")
@@ -245,9 +256,9 @@ export async function createAgentGraph() {
     checkpointer,
   });
 
-  console.log(`[Graph] ✓ Task-orchestrated agent graph compiled with 15 nodes`);
+  console.log(`[Graph] ✓ Task-orchestrated agent graph compiled with 16 nodes`);
   console.log(`[Graph]   - Task orchestration: router → task_executor → task_complete → response_synthesizer`);
-  console.log(`[Graph]   - Route nodes: property search (5), property_ops, filter, perplexity, collections, showings, commissions`);
+  console.log(`[Graph]   - Route nodes: property search (5), property_ops, filter, image_similarity, perplexity, collections, showings, commissions`);
 
   return graph;
 }

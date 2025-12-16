@@ -105,6 +105,14 @@ export class AgentSubscriber {
       const query = payload?.query || payload?.message || payload?.parameters?.query;
       // Only use explicit searchId from payload (no fallback to prevent incorrect routing)
       const searchId = payload?.searchId || payload?.parameters?.searchId;
+      // Extract image attachment for similarity search
+      const imageAttachment = payload?.imageAttachment || null;
+
+      // Log image attachment if present
+      if (imageAttachment) {
+        console.log('[Subscriber] ====== DEBUG: ImageAttachment ======');
+        console.log(`[Subscriber] Image: ${imageAttachment.filename || 'unnamed'}, ${(imageAttachment.sizeBytes / 1024).toFixed(1)}KB, ${imageAttachment.mimeType}`);
+      }
 
       console.log('[Subscriber] ====== DEBUG: Query & SearchId Extraction ======');
       console.log('[Subscriber] query:', query);
@@ -203,6 +211,7 @@ export class AgentSubscriber {
             platform: platformContext.platform,   // Platform identifier for downstream nodes
           },
           platformContext,  // Platform context for platform-aware behavior
+          imageAttachment,  // Image attachment for similarity search (null if not provided)
         };
 
         console.log('[Subscriber] ====== DEBUG: Graph Invocation ======');

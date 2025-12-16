@@ -184,8 +184,21 @@ When the user asks about "my listings", "my collections", "my CMAs", or "my show
         `- "find houses in Miami Beach" → PROPERTY_SEARCH (new search, different criteria)\n`
       : '';
 
+    // Check for image attachment
+    const hasImageAttachment = !!state.imageAttachment;
+    console.log(`[Router] 🖼️ Image attachment detected: ${hasImageAttachment}`);
+    if (hasImageAttachment) {
+      console.log(`[Router] Image: ${state.imageAttachment!.mimeType}, ${(state.imageAttachment!.sizeBytes / 1024).toFixed(1)}KB`);
+    }
+    const imageContext = hasImageAttachment
+      ? `\n\n**📷 IMAGE ATTACHMENT DETECTED** (${state.imageAttachment!.mimeType}, ${(state.imageAttachment!.sizeBytes / 1024).toFixed(1)}KB)\n` +
+        `If the user is asking for similar properties/rooms/styles, you MUST:\n` +
+        `1. First create a PROPERTY_SEARCH task with location/price criteria\n` +
+        `2. Then create an IMAGE_SIMILARITY_SEARCH task to rank by visual similarity\n`
+      : '';
+
     const instructions = `
-Your job: Analyze the user's query and decide:
+Your job: Analyze the user's query and decide:${imageContext}
 
 ## Decision 1: Is this conversational?
 Conversational queries (respond directly, no tasks):
@@ -214,12 +227,21 @@ For ANY query that requires action, generate a JSON task list.
 ## Route Options:
 - **PROPERTY_SEARCH**: Search for properties (new search criteria)
 - **PROPERTY_OPERATIONS**: Work with search results (filter, sort, details, CMA, get results)
+- **IMAGE_SIMILARITY_SEARCH**: Find properties with visually similar rooms (requires image attachment)
 - **PERPLEXITY_SEARCH**: Web research (neighborhoods, market trends, schools)
 - **COLLECTIONS**: Manage property collections
 - **SHOWINGS**: Schedule/manage showings
 - **COMMISSIONS**: Commission requests
 
 ${searchContext}
+
+## IMAGE SIMILARITY SEARCH:
+If the user has attached an image AND uses words like "similar", "like this", "matching", "find properties like":
+1. FIRST run PROPERTY_SEARCH to filter by location/price criteria
+2. THEN run IMAGE_SIMILARITY_SEARCH to rank by visual similarity within those results
+
+Example: User attaches kitchen photo + "Find similar kitchens in Aventura under $1M"
+→ 2 tasks: PROPERTY_SEARCH (Aventura under $1M), then IMAGE_SIMILARITY_SEARCH (rank by kitchen similarity)
 
 ## Context-Aware Task Generation Examples:
 
@@ -428,6 +450,7 @@ function isValidTaskList(obj: any): obj is { tasks: Array<{ route: string; task:
     'PROPERTY_SEARCH',
     'PROPERTY_OPERATIONS',
     'PROPERTY_FILTER',
+    'IMAGE_SIMILARITY_SEARCH',
     'PERPLEXITY_SEARCH',
     'COLLECTIONS',
     'SHOWINGS',
