@@ -26,8 +26,9 @@ export class AgentSubscriber {
   private publisher: AgentPublisher;
   private subscription: any;
   private tokenBuffers: Map<string, TokenBuffer> = new Map();
-  private readonly BUFFER_MAX_TOKENS = 10;      // Flush after 10 tokens
-  private readonly BUFFER_MAX_DELAY_MS = 50;    // Or flush after 50ms
+  private readonly BUFFER_MAX_TOKENS = 5;       // Flush after 5 tokens (reduced for faster streaming)
+  private readonly BUFFER_MAX_DELAY_MS = 30;    // Or flush after 30ms (reduced for faster streaming)
+  private readonly FIRST_CHUNK_IMMEDIATE = true; // Send first chunk immediately to prevent loss
 
   constructor(private pubsub: PubSub) {
     this.publisher = new AgentPublisher(pubsub);
@@ -438,6 +439,15 @@ export class AgentSubscriber {
     // Clear existing timer if any
     if (buffer.timer) {
       clearTimeout(buffer.timer);
+    }
+
+    // 🚀 FIX: Send first chunk immediately to prevent loss/delay
+    // This ensures users see the response start instantly
+    const isFirstChunk = buffer.chunks.length === 1;
+    if (this.FIRST_CHUNK_IMMEDIATE && isFirstChunk) {
+      console.log(`[Subscriber] 🚀 Sending first chunk immediately for messageId: ${messageId}`);
+      await this.flushTokenBuffer(messageId);
+      return;
     }
 
     // Flush immediately if we've accumulated enough tokens

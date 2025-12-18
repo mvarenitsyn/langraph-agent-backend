@@ -7,6 +7,7 @@ import { initializeTools } from './tools/index.js';
 import { createAgentGraph } from './graph/index.js';
 import { PubSub } from '@google-cloud/pubsub';
 import { AgentSubscriber } from './pubsub/subscriber.js';
+import { UserResponseSubscriber } from './pubsub/user-response-subscriber.js';
 import {
   createSSEMessage,
   createStepStartEvent,
@@ -350,12 +351,13 @@ async function startServer() {
       })
     });
 
-    // Configure batching for text stream topic (performance optimization)
+    // Configure batching for text stream topic (optimized for low latency)
+    // Reduced delays to prevent first chunk from being lost/delayed
     const textStreamTopic = pubsub.topic('agent.text.stream');
     textStreamTopic.setPublishOptions({
       batching: {
-        maxMessages: 100,          // Batch up to 100 messages
-        maxMilliseconds: 50,       // Or flush after 50ms
+        maxMessages: 50,           // Batch up to 50 messages (reduced for faster delivery)
+        maxMilliseconds: 10,       // Or flush after 10ms (reduced from 50ms to minimize first-chunk delay)
         maxBytes: 1024 * 1024,     // 1MB max batch size
       },
       flowControlOptions: {
@@ -363,11 +365,16 @@ async function startServer() {
         maxOutstandingBytes: 10 * 1024 * 1024, // 10MB
       }
     });
-    console.log('✓ Pub/Sub batching configured for agent.text.stream');
+    console.log('✓ Pub/Sub batching configured for agent.text.stream (low latency mode)');
 
     const subscriber = new AgentSubscriber(pubsub);
     await subscriber.start();
-    console.log('✓ Pub/Sub subscriber initialized');
+    console.log('✓ Pub/Sub task subscriber initialized');
+
+    // Initialize user response subscriber for human-in-the-loop
+    const userResponseSubscriber = new UserResponseSubscriber(pubsub);
+    await userResponseSubscriber.start();
+    console.log('✓ Pub/Sub user response subscriber initialized');
 
     // Start server
     app.listen(config.server.port, () => {
