@@ -52,10 +52,14 @@ export interface MappedQueryStrict {
   minPrice: number | null;
   /** Maximum price in dollars */
   maxPrice: number | null;
-  /** Minimum square feet */
+  /** Minimum square feet (living area) */
   minSqft: number | null;
-  /** Maximum square feet */
+  /** Maximum square feet (living area) */
   maxSqft: number | null;
+  /** Minimum lot size in square feet (land area) */
+  minLotSqft: number | null;
+  /** Maximum lot size in square feet (land area) */
+  maxLotSqft: number | null;
   /** Minimum year built */
   minYearBuilt: number | null;
   /** Maximum year built */
@@ -141,6 +145,8 @@ export const MappedQueryJsonSchema = {
         "maxPrice": { "type": ["number", "null"] },
         "minSqft": { "type": ["number", "null"] },
         "maxSqft": { "type": ["number", "null"] },
+        "minLotSqft": { "type": ["number", "null"] },
+        "maxLotSqft": { "type": ["number", "null"] },
         "minYearBuilt": { "type": ["number", "null"] },
         "maxYearBuilt": { "type": ["number", "null"] },
         "poolYn": { "type": ["boolean", "null"] },

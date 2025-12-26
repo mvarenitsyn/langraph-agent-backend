@@ -82,6 +82,8 @@ interface InternalFilters {
   status?: string;           // Single string, not array
   minSqft?: number;
   maxSqft?: number;
+  minLotSqft?: number;
+  maxLotSqft?: number;
   minYearBuilt?: number;
   maxYearBuilt?: number;
   // Boolean filters - re-enabled with data quality improvements
@@ -123,6 +125,8 @@ function convertToFilters(query: MappedQuery): InternalFilters {
   if (s.maxBaths !== null && s.maxBaths !== s.minBaths) filters.maxBathrooms = s.maxBaths;
   if (s.minSqft !== null) filters.minSqft = s.minSqft;
   if (s.maxSqft !== null) filters.maxSqft = s.maxSqft;
+  if (s.minLotSqft !== null) filters.minLotSqft = s.minLotSqft;
+  if (s.maxLotSqft !== null) filters.maxLotSqft = s.maxLotSqft;
   if (s.propertyType?.length) filters.propertyType = s.propertyType;
   // propertySubType is now a single string - guard against LLM returning invalid values like ":null"
   if (s.propertySubType && s.propertySubType !== ':null' && s.propertySubType !== 'null') {
@@ -229,12 +233,20 @@ async function esLocationSearch(filters: InternalFilters): Promise<Map<string, n
     filter.push({ range: { bathrooms: range } });
   }
 
-  // Square feet
+  // Square feet (living area)
   if (filters.minSqft !== undefined || filters.maxSqft !== undefined) {
     const range: Record<string, number> = {};
     if (filters.minSqft !== undefined) range.gte = filters.minSqft;
     if (filters.maxSqft !== undefined) range.lte = filters.maxSqft;
     filter.push({ range: { square_feet: range } });
+  }
+
+  // Lot size (land area)
+  if (filters.minLotSqft !== undefined || filters.maxLotSqft !== undefined) {
+    const range: Record<string, number> = {};
+    if (filters.minLotSqft !== undefined) range.gte = filters.minLotSqft;
+    if (filters.maxLotSqft !== undefined) range.lte = filters.maxLotSqft;
+    filter.push({ range: { lot_size_square_feet: range } });
   }
 
   // Status - single string value (not array)
@@ -396,12 +408,20 @@ async function esFeaturesSearch(
       filter.push({ term: { property_sub_type: filters.propertySubType } });
     }
 
-    // Square feet
+    // Square feet (living area)
     if (filters.minSqft !== undefined || filters.maxSqft !== undefined) {
       const range: Record<string, number> = {};
       if (filters.minSqft !== undefined) range.gte = filters.minSqft;
       if (filters.maxSqft !== undefined) range.lte = filters.maxSqft;
       filter.push({ range: { square_feet: range } });
+    }
+
+    // Lot size (land area)
+    if (filters.minLotSqft !== undefined || filters.maxLotSqft !== undefined) {
+      const range: Record<string, number> = {};
+      if (filters.minLotSqft !== undefined) range.gte = filters.minLotSqft;
+      if (filters.maxLotSqft !== undefined) range.lte = filters.maxLotSqft;
+      filter.push({ range: { lot_size_square_feet: range } });
     }
 
     // Year built

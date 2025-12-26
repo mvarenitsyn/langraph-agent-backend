@@ -41,8 +41,10 @@ const MappedQuerySchema = z.object({
     maxBaths: z.number().nullable().describe("Maximum bathrooms"),
     minPrice: z.number().nullable().describe("Minimum price in dollars"),
     maxPrice: z.number().nullable().describe("Maximum price in dollars"),
-    minSqft: z.number().nullable().describe("Minimum square feet"),
-    maxSqft: z.number().nullable().describe("Maximum square feet"),
+    minSqft: z.number().nullable().describe("Minimum square feet (living area)"),
+    maxSqft: z.number().nullable().describe("Maximum square feet (living area)"),
+    minLotSqft: z.number().nullable().describe("Minimum lot size in square feet (land area). Convert acres: 1 acre = 43560 sqft"),
+    maxLotSqft: z.number().nullable().describe("Maximum lot size in square feet (land area). Convert acres: 1 acre = 43560 sqft"),
     minYearBuilt: z.number().nullable().describe("Minimum year built"),
     maxYearBuilt: z.number().nullable().describe("Maximum year built"),
 
@@ -100,6 +102,7 @@ export async function queryMapperNode(state: AgentStateType): Promise<Partial<Ag
         propertyType: null, propertySubType: null, status: null,
         minBeds: null, maxBeds: null, minBaths: null, maxBaths: null,
         minPrice: null, maxPrice: null, minSqft: null, maxSqft: null,
+        minLotSqft: null, maxLotSqft: null,
         minYearBuilt: null, maxYearBuilt: null,
         poolYn: null, waterfrontYn: null, garageYn: null, newConstructionYn: null,
         seniorCommunityYn: null, viewTypes: null,
@@ -189,7 +192,10 @@ Common Miami-Dade neighborhoods and their ZIP codes (use your knowledge for othe
    - maxBeds: Set to SAME value as minBeds for exact bedroom requests. "3br" = maxBeds: 3. "2-bedroom" = maxBeds: 2. ONLY set to null if user says "2+ beds" or "at least 2".
    - minBaths/maxBaths: bathroom count, null if not mentioned
    - minPrice/maxPrice: price range (e.g., "under $800k" = maxPrice: 800000), null if not mentioned
-   - minSqft/maxSqft: square footage range, null if not mentioned
+   - minSqft/maxSqft: living area square footage range, null if not mentioned
+   - minLotSqft/maxLotSqft: lot size (land area) in square feet. Convert acres to sqft (1 acre = 43560 sqft).
+     Examples: "half acre lot" → minLotSqft: 21780, "1 acre+" → minLotSqft: 43560, "10,000 sqft lot" → minLotSqft: 10000
+     Typically applies to SingleFamilyResidence or Land, not condos.
    - minYearBuilt/maxYearBuilt: year built range, null if not mentioned
    - poolYn: true if user wants a property with a private pool, otherwise null
    - waterfrontYn: true if user is specifically looking for waterfront properties (on the water, direct water access), otherwise null
