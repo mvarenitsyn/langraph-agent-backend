@@ -75,7 +75,7 @@ export async function taskCompleteNode(state: AgentStateType): Promise<Partial<A
   }
 
   // Mark current task as completed with results
-  const updatedTasks = taskList.tasks.map(t =>
+  let updatedTasks = taskList.tasks.map(t =>
     t.id === currentTaskId
       ? {
           ...t,
@@ -90,7 +90,43 @@ export async function taskCompleteNode(state: AgentStateType): Promise<Partial<A
       : t
   );
 
-  // Check if more tasks remain
+  // 🏢 Multi-unit building detection: Skip PROPERTY_OPERATIONS if search found multiple properties
+  // This handles cases like "19390 Collins Ave" which is a condo building with 26+ units
+  if (currentTask.route === 'PROPERTY_SEARCH') {
+    const resultCount = state.toolResults?.searchResults?.length || 0;
+
+    if (resultCount > 1) {
+      // Find next pending task
+      const nextPendingTask = updatedTasks.find(t => t.status === 'pending');
+
+      if (nextPendingTask?.route === 'PROPERTY_OPERATIONS') {
+        // Check if it's requesting details for an address (not a specific listing key)
+        const taskInstruction = nextPendingTask.task.toLowerCase();
+        const isAddressDetailsRequest =
+          taskInstruction.includes('details') ||
+          taskInstruction.includes('property') ||
+          taskInstruction.includes('listing');
+
+        if (isAddressDetailsRequest) {
+          console.log(`[TaskComplete] 🏢 Multi-unit building detected (${resultCount} properties)`);
+          console.log(`[TaskComplete] ⏭️  Skipping PROPERTY_OPERATIONS - showing search results instead`);
+
+          // Mark the task as skipped
+          updatedTasks = updatedTasks.map(t =>
+            t.id === nextPendingTask.id
+              ? {
+                  ...t,
+                  status: 'skipped' as const,
+                  skipReason: `Multiple properties (${resultCount}) found at address - showing search results instead`,
+                }
+              : t
+          );
+        }
+      }
+    }
+  }
+
+  // Check if more tasks remain (pending only, not skipped)
   const hasMoreTasks = updatedTasks.some(t => t.status === 'pending');
 
   console.log(`[TaskComplete] ✓ Task completed`);

@@ -1,18 +1,20 @@
 import { AIMessage, HumanMessage, SystemMessage } from "@langchain/core/messages";
-import { AgentStateType } from "../types/state.js";
+import { AgentStateType, TaskItem } from "../types/state.js";
 import { createResponseModel } from "../models/openai.js";
 import { sharedPublisher } from "../pubsub/shared.js";
-import { getPlatformContext } from "../utils/platformContext.js";
+import { uiEventPublisher } from "../pubsub/ui-event-publisher.js";
+import { getPlatformContext, shouldPublishUIEvents } from "../utils/platformContext.js";
 import { buildFormattingInstructions, adaptMarkdown, truncateResponse } from "../utils/formatters.js";
 
 /**
  * Response Synthesizer Node - Combines Multi-Step Results
  *
  * This node generates a coherent final response from multi-step workflow results:
- * 1. Gathers all completed task results
- * 2. Uses LLM to synthesize into a unified response
- * 3. Handles failed tasks gracefully
- * 4. Formats response for the user's platform
+ * 1. ⚡ IMMEDIATELY publishes UI event for last completed task (before LLM)
+ * 2. Gathers all completed task results
+ * 3. Uses LLM to synthesize into a unified response
+ * 4. Handles failed and skipped tasks gracefully
+ * 5. Formats response for the user's platform
  */
 export async function responseSynthesizerNode(state: AgentStateType): Promise<Partial<AgentStateType>> {
   console.log('\n[ResponseSynthesizer] ====== Response Synthesizer Node ======');
@@ -32,6 +34,26 @@ export async function responseSynthesizerNode(state: AgentStateType): Promise<Pa
   // Resolve platform context
   const platformContext = getPlatformContext(state);
   console.log(`[ResponseSynthesizer] Platform: ${platformContext.platform}`);
+
+  // ⚡ IMMEDIATE UI EVENT: Publish BEFORE any LLM work
+  // This lets user see results on map/list while we generate the text response
+  // Key insight: We publish UI for the LAST COMPLETED task (not skipped, not failed)
+  if (shouldPublishUIEvents(platformContext)) {
+    const lastCompletedTask = taskList.tasks
+      .filter(t => t.status === 'completed')
+      .slice(-1)[0];
+
+    if (lastCompletedTask) {
+      console.log(`[ResponseSynthesizer] ⚡ Publishing UI event for ${lastCompletedTask.route} IMMEDIATELY`);
+      await publishUIEventForTask(lastCompletedTask, state);
+    }
+  }
+
+  // Log skipped tasks for debugging
+  const skippedTasks = taskList.tasks.filter(t => t.status === 'skipped');
+  if (skippedTasks.length > 0) {
+    console.log(`[ResponseSynthesizer] ⏭️  Skipped tasks: ${skippedTasks.map(t => `${t.route} (${t.skipReason})`).join(', ')}`);
+  }
 
   // Check if any tasks failed
   const failedTask = taskList.tasks.find(t => t.status === 'failed');
@@ -276,4 +298,52 @@ function generateFallbackResponse(
 ${summaries.map(s => `• ${s}`).join('\n')}
 
 Is there anything else you'd like to know?`;
+}
+
+/**
+ * Publish UI render event for a completed task
+ * Called immediately when entering response-synthesizer for instant UI feedback
+ */
+async function publishUIEventForTask(task: TaskItem, state: AgentStateType): Promise<void> {
+  const sessionId = state.metadata?.sessionId || '';
+  const userId = state.metadata?.userId;
+  const correlationId = state.metadata?.correlationId;
+
+  switch (task.route) {
+    case 'PROPERTY_SEARCH':
+      // Publish search results UI event
+      if (task.result?.searchId) {
+        await uiEventPublisher.publishSearchResults({
+          searchId: task.result.searchId,
+          totalCount: task.result.totalCount || 0,
+          searchToken: state.metadata?.searchToken,
+          mapLink: state.metadata?.mapLink,
+          sessionId,
+          userId,
+          correlationId,
+        });
+      }
+      break;
+
+    case 'PROPERTY_OPERATIONS':
+      // Publish property details UI event
+      const property = task.result?.toolResults?.propertyDetails;
+      const listingKey = state.metadata?.listingKey || property?.ListingKey;
+      if (property && listingKey) {
+        await uiEventPublisher.publishPropertyDetails({
+          searchId: task.result?.searchId || state.metadata?.searchId,
+          listingKey,
+          property,
+          sessionId,
+          userId,
+          correlationId,
+        });
+      }
+      break;
+
+    // Other routes don't have UI render events currently
+    default:
+      console.log(`[ResponseSynthesizer] No UI event for route: ${task.route}`);
+      break;
+  }
 }

@@ -33,7 +33,7 @@ export interface TaskItem {
   id: string;                          // Unique task ID (uuid)
   route: RouteType;                    // Route to execute
   task: string;                        // Natural language instruction for the route
-  status: 'pending' | 'in_progress' | 'completed' | 'failed';
+  status: 'pending' | 'in_progress' | 'completed' | 'failed' | 'skipped';
   dependsOn?: string[];                // Task IDs this depends on (for future parallel execution)
   result?: {
     searchId?: string;
@@ -42,6 +42,7 @@ export interface TaskItem {
     totalCount?: number;
   };
   error?: string;                      // Error message if failed
+  skipReason?: string;                 // Reason for skipping (if status is 'skipped')
 }
 
 /**
