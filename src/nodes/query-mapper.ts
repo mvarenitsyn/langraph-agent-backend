@@ -51,6 +51,10 @@ const MappedQuerySchema = z.object({
     waterfrontYn: z.boolean().nullable().describe("Is waterfront property"),
     garageYn: z.boolean().nullable().describe("Has garage"),
     newConstructionYn: z.boolean().nullable().describe("Is new construction"),
+    seniorCommunityYn: z.boolean().nullable().describe("Is 55+ senior/active adult community"),
+
+    // View filter - for specific view types
+    viewTypes: z.array(z.string()).nullable().describe("View types: 'Ocean', 'Bay', 'Intracoastal', 'Canal', 'Lake', 'Golf', 'City', 'Garden', 'Pool'"),
   }),
 
   // VECTOR similarity search
@@ -98,6 +102,7 @@ export async function queryMapperNode(state: AgentStateType): Promise<Partial<Ag
         minPrice: null, maxPrice: null, minSqft: null, maxSqft: null,
         minYearBuilt: null, maxYearBuilt: null,
         poolYn: null, waterfrontYn: null, garageYn: null, newConstructionYn: null,
+        seniorCommunityYn: null, viewTypes: null,
       },
       visual_features: '',
       other: '',
@@ -182,10 +187,12 @@ Common Miami-Dade neighborhoods and their ZIP codes (use your knowledge for othe
    - minPrice/maxPrice: price range (e.g., "under $800k" = maxPrice: 800000), null if not mentioned
    - minSqft/maxSqft: square footage range, null if not mentioned
    - minYearBuilt/maxYearBuilt: year built range, null if not mentioned
-   - poolYn: true ONLY if "pool" or "with pool" explicitly mentioned, otherwise null
-   - waterfrontYn: true ONLY if "waterfront" explicitly mentioned, otherwise null
-   - garageYn: true ONLY if "garage" explicitly mentioned, otherwise null
-   - newConstructionYn: true ONLY if "new construction" explicitly mentioned, otherwise null
+   - poolYn: true if user wants a property with a private pool, otherwise null
+   - waterfrontYn: true if user is specifically looking for waterfront properties (on the water, direct water access), otherwise null
+   - garageYn: true if user requires a garage for parking, otherwise null
+   - newConstructionYn: true if user specifically wants newly built or new construction properties, otherwise null
+   - seniorCommunityYn: true if user is looking for age-restricted communities (typically 55+ or active adult communities designed for older residents), otherwise null
+   - viewTypes: Array of specific view types the user wants. Identify the actual view being requested (Ocean, Bay, Intracoastal, Canal, Lake, Golf, City, Garden, Pool). If user says "water view" broadly, include relevant water views. Otherwise null
 
 4. **visual_features** segment (VECTOR search):
    - Colors: "white kitchen", "dark floors"
@@ -362,6 +369,8 @@ Note: "2-bedroom" = EXACTLY 2 bedrooms → minBeds: 2, maxBeds: 2. NOT minBeds: 
         waterfrontYn: rawMappedQuery.strict.waterfrontYn === false ? null : rawMappedQuery.strict.waterfrontYn,
         garageYn: rawMappedQuery.strict.garageYn === false ? null : rawMappedQuery.strict.garageYn,
         newConstructionYn: rawMappedQuery.strict.newConstructionYn === false ? null : rawMappedQuery.strict.newConstructionYn,
+        seniorCommunityYn: rawMappedQuery.strict.seniorCommunityYn === false ? null : rawMappedQuery.strict.seniorCommunityYn,
+        viewTypes: rawMappedQuery.strict.viewTypes?.length ? rawMappedQuery.strict.viewTypes : null,
       },
     };
 

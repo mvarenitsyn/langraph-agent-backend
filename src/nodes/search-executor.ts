@@ -69,6 +69,7 @@ interface InternalFilters {
   locationQuery?: string;
   cities?: string[];
   postalCodes?: string[];
+  // NOTE: counties not used as separate filter - searchable via enhanced address field
   featuresQuery?: string;
   minPrice?: number;
   maxPrice?: number;
@@ -83,8 +84,14 @@ interface InternalFilters {
   maxSqft?: number;
   minYearBuilt?: number;
   maxYearBuilt?: number;
-  // NOTE: Boolean fields (poolYn, waterfrontYn, garageYn, newConstructionYn) and counties
-  // are NOT used for ES filtering - data quality issues
+  // Boolean filters - re-enabled with data quality improvements
+  poolYn?: boolean;
+  waterfrontYn?: boolean;
+  garageYn?: boolean;
+  newConstructionYn?: boolean;
+  seniorCommunityYn?: boolean;
+  // View types filter
+  viewTypes?: string[];
 }
 
 /**
@@ -97,7 +104,7 @@ function convertToFilters(query: MappedQuery): InternalFilters {
   if (query.location.query) filters.locationQuery = query.location.query;
   if (query.location.cities?.length) filters.cities = query.location.cities;
   if (query.location.postalCodes?.length) filters.postalCodes = query.location.postalCodes;
-  // NOTE: counties not used - data quality issues
+  // NOTE: counties handled via searchable_address field, not as separate filter
 
   // Features
   if (query.features.query) filters.featuresQuery = query.features.query;
@@ -128,7 +135,16 @@ function convertToFilters(query: MappedQuery): InternalFilters {
   // Year built
   if (s.minYearBuilt !== null) filters.minYearBuilt = s.minYearBuilt;
   if (s.maxYearBuilt !== null) filters.maxYearBuilt = s.maxYearBuilt;
-  // NOTE: Boolean filters (poolYn, waterfrontYn, garageYn, newConstructionYn) not used - data quality issues
+
+  // Boolean filters - re-enabled
+  if (s.poolYn === true) filters.poolYn = true;
+  if (s.waterfrontYn === true) filters.waterfrontYn = true;
+  if (s.garageYn === true) filters.garageYn = true;
+  if (s.newConstructionYn === true) filters.newConstructionYn = true;
+  if (s.seniorCommunityYn === true) filters.seniorCommunityYn = true;
+
+  // View types filter
+  if (s.viewTypes?.length) filters.viewTypes = s.viewTypes;
 
   return filters;
 }
@@ -169,11 +185,17 @@ async function esLocationSearch(filters: InternalFilters): Promise<Map<string, n
 
   // Location query - boosted address fields for better relevance
   // Higher boosts ensure exact address matches rank significantly higher
+  // Also searches subdivision_name and building_name for building/complex searches
   if (hasQuery) {
     should.push(
       { match: { unparsed_address: { query: filters.locationQuery, boost: 10.0 } } },
       { match: { normalized_address: { query: filters.locationQuery, boost: 8.0 } } },
-      { match: { street_name: { query: filters.locationQuery, boost: 5.0 } } }
+      { match: { street_name: { query: filters.locationQuery, boost: 5.0 } } },
+      // Add subdivision/building name search for queries like "La Perla" or "Mystic Pointe"
+      { match: { subdivision_name: { query: filters.locationQuery, boost: 12.0 } } },
+      { match: { building_name: { query: filters.locationQuery, boost: 12.0 } } },
+      // Also search enhanced_address which contains building + subdivision + county
+      { match: { searchable_address: { query: filters.locationQuery, boost: 8.0 } } }
     );
   }
 
@@ -232,8 +254,27 @@ async function esLocationSearch(filters: InternalFilters): Promise<Map<string, n
     filter.push({ range: { year_built: range } });
   }
 
-  // NOTE: Boolean filters (poolYn, waterfrontYn, garageYn, newConstructionYn) and counties
-  // are NOT used for ES filtering - data quality issues
+  // Boolean filters - re-enabled
+  if (filters.poolYn === true) {
+    filter.push({ term: { pool_private_yn: true } });
+  }
+  if (filters.waterfrontYn === true) {
+    filter.push({ term: { waterfront_yn: true } });
+  }
+  if (filters.garageYn === true) {
+    filter.push({ term: { garage_yn: true } });
+  }
+  if (filters.newConstructionYn === true) {
+    filter.push({ term: { new_construction_yn: true } });
+  }
+  if (filters.seniorCommunityYn === true) {
+    filter.push({ term: { senior_community_yn: true } });
+  }
+
+  // View types filter - match any of the specified view types
+  if (filters.viewTypes?.length) {
+    filter.push({ terms: { view_types: filters.viewTypes } });
+  }
 
   const boolQuery: Record<string, unknown> = {};
   if (filter.length > 0) boolQuery.filter = filter;
