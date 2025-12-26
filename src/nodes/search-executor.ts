@@ -69,7 +69,7 @@ interface InternalFilters {
   locationQuery?: string;
   cities?: string[];
   postalCodes?: string[];
-  // NOTE: counties not used as separate filter - searchable via enhanced address field
+  counties?: string[];
   featuresQuery?: string;
   minPrice?: number;
   maxPrice?: number;
@@ -104,7 +104,7 @@ function convertToFilters(query: MappedQuery): InternalFilters {
   if (query.location.query) filters.locationQuery = query.location.query;
   if (query.location.cities?.length) filters.cities = query.location.cities;
   if (query.location.postalCodes?.length) filters.postalCodes = query.location.postalCodes;
-  // NOTE: counties handled via searchable_address field, not as separate filter
+  if (query.location.counties?.length) filters.counties = query.location.counties;
 
   // Features
   if (query.features.query) filters.featuresQuery = query.features.query;
@@ -158,6 +158,7 @@ async function esLocationSearch(filters: InternalFilters): Promise<Map<string, n
   const hasQuery = !!filters.locationQuery;
   const hasCities = filters.cities && filters.cities.length > 0;
   const hasPostalCodes = filters.postalCodes && filters.postalCodes.length > 0;
+  const hasCounties = filters.counties && filters.counties.length > 0;
   const hasStrictFilters = filters.minPrice !== undefined || filters.maxPrice !== undefined ||
     filters.minBedrooms !== undefined || filters.maxBedrooms !== undefined ||
     filters.minBathrooms !== undefined || filters.maxBathrooms !== undefined ||
@@ -165,7 +166,7 @@ async function esLocationSearch(filters: InternalFilters): Promise<Map<string, n
     filters.minSqft !== undefined || filters.maxSqft !== undefined ||
     filters.minYearBuilt !== undefined || filters.maxYearBuilt !== undefined;
 
-  if (!hasQuery && !hasCities && !hasPostalCodes && !hasStrictFilters) {
+  if (!hasQuery && !hasCities && !hasPostalCodes && !hasCounties && !hasStrictFilters) {
     return results;
   }
 
@@ -181,6 +182,11 @@ async function esLocationSearch(filters: InternalFilters): Promise<Map<string, n
   // Postal codes
   if (hasPostalCodes) {
     filter.push({ terms: { postal_code: filters.postalCodes } });
+  }
+
+  // County filter - exact match on county field
+  if (hasCounties) {
+    filter.push({ terms: { county: filters.counties } });
   }
 
   // Location query - boosted address fields for better relevance
@@ -344,6 +350,11 @@ async function esFeaturesSearch(
     // City filter - use city.keyword for exact matching
     if (filters.cities?.length) {
       filter.push({ terms: { 'city.keyword': filters.cities } });
+    }
+
+    // County filter - exact match on county field
+    if (filters.counties?.length) {
+      filter.push({ terms: { county: filters.counties } });
     }
 
     // Price range

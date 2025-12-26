@@ -138,6 +138,10 @@ export async function queryMapperNode(state: AgentStateType): Promise<Partial<Ag
    - cities: Extract city names as array (e.g., ["Miami Beach", "Fort Lauderdale"]) or null if not mentioned
    - postalCodes: Extract ZIP codes as array (e.g., ["33139", "33180"]) or null if not mentioned
    - counties: Extract county names if mentioned, otherwise null
+     * Use EXACT official county name (e.g., "Broward", "Miami-Dade", "Palm Beach")
+     * Do NOT include the word "County" (use "Broward" not "Broward County")
+     * Fix any misspellings (e.g., "Browrd" → "Broward", "Dade" → "Miami-Dade")
+     * Use hyphenated names where official (e.g., "Miami-Dade" not "Miami Dade")
    - **IMPORTANT**: City names go ONLY in cities array, NOT in query field
 
 **🏘️ CRITICAL: NEIGHBORHOOD → ZIP CODE CONVERSION:**
