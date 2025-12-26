@@ -70,6 +70,12 @@ export interface MappedQueryStrict {
   garageYn: boolean | null;
   /** Is new construction */
   newConstructionYn: boolean | null;
+  /** Is 55+ senior/active adult community */
+  seniorCommunityYn: boolean | null;
+
+  // Array filters
+  /** View types: Ocean, Bay, Intracoastal, Canal, Lake, Golf, City, Garden, Pool */
+  viewTypes: string[] | null;
 }
 
 export interface MappedQuery {
@@ -140,7 +146,9 @@ export const MappedQueryJsonSchema = {
         "poolYn": { "type": ["boolean", "null"] },
         "waterfrontYn": { "type": ["boolean", "null"] },
         "garageYn": { "type": ["boolean", "null"] },
-        "newConstructionYn": { "type": ["boolean", "null"] }
+        "newConstructionYn": { "type": ["boolean", "null"] },
+        "seniorCommunityYn": { "type": ["boolean", "null"] },
+        "viewTypes": { "type": ["array", "null"], "items": { "type": "string" } }
       }
     },
     "visual_features": { "type": "string" },
