@@ -118,7 +118,7 @@ export async function queryMapperNode(state: AgentStateType): Promise<Partial<Ag
 
   try {
     // PERFORMANCE: Using GPT-5.1 for faster query parsing with better accuracy
-    // GPT-5.1 is optimized for agentic tasks and structured outputs
+    // GPT-5.1 is an existing OpenAI model optimized for agentic tasks and structured outputs
     const model = new ChatOpenAI({
       model: "gpt-5.1",
       temperature: 0,
@@ -188,14 +188,21 @@ Common Miami-Dade neighborhoods and their ZIP codes (use your knowledge for othe
    - propertyType: ["Residential"] for sales, ["ResidentialLease"] for rentals, null if not determinable
    - propertySubType: "Condominium", "SingleFamilyResidence", "Townhouse", "Apartment" (SINGLE STRING, not array), null if not mentioned
    - status: "Active" for available, "Closed" for sold, "Pending" (SINGLE STRING, not array), null if not mentioned
-   - minBeds: bedroom count. "3br" or "3-bedroom" = minBeds: 3
+   - minBeds: bedroom count. "3br" or "3-bedroom" = minBeds: 3. ONLY for explicit bedroom mentions.
    - maxBeds: Set to SAME value as minBeds for exact bedroom requests. "3br" = maxBeds: 3. "2-bedroom" = maxBeds: 2. ONLY set to null if user says "2+ beds" or "at least 2".
    - minBaths/maxBaths: bathroom count, null if not mentioned
    - minPrice/maxPrice: price range (e.g., "under $800k" = maxPrice: 800000), null if not mentioned
-   - minSqft/maxSqft: living area square footage range, null if not mentioned
-   - minLotSqft/maxLotSqft: lot size (land area) in square feet. Convert acres to sqft (1 acre = 43560 sqft).
-     Examples: "half acre lot" → minLotSqft: 21780, "1 acre+" → minLotSqft: 43560, "10,000 sqft lot" → minLotSqft: 10000
-     Typically applies to SingleFamilyResidence or Land, not condos.
+   - minSqft/maxSqft: living area (interior) square footage range, null if not mentioned
+
+   **CRITICAL - LOT SIZE (LAND AREA) - DO NOT CONFUSE WITH BEDROOMS:**
+   - minLotSqft/maxLotSqft: LOT SIZE = LAND AREA in square feet. This is the SIZE OF THE LAND/PROPERTY, NOT bedrooms!
+     * "acre" = land measurement, NOT bedrooms! 1 acre = 43560 sqft
+     * "1 acre lot" → minLotSqft: 43560 (NOT minBeds!)
+     * "half acre" → minLotSqft: 21780
+     * "2 acres" → minLotSqft: 87120
+     * "10,000 sqft lot" → minLotSqft: 10000
+     * "quarter acre" → minLotSqft: 10890
+     * Applies to SingleFamilyResidence or Land property types, not condos.
    - minYearBuilt/maxYearBuilt: year built range, null if not mentioned
    - poolYn: true if user wants a property with a private pool, otherwise null
    - waterfrontYn: true if user is specifically looking for waterfront properties (on the water, direct water access), otherwise null
@@ -373,6 +380,8 @@ Note: "2-bedroom" = EXACTLY 2 bedrooms → minBeds: 2, maxBeds: 2. NOT minBeds: 
         maxPrice: rawMappedQuery.strict.maxPrice === 0 ? null : rawMappedQuery.strict.maxPrice,
         minSqft: rawMappedQuery.strict.minSqft === 0 ? null : rawMappedQuery.strict.minSqft,
         maxSqft: rawMappedQuery.strict.maxSqft === 0 ? null : rawMappedQuery.strict.maxSqft,
+        minLotSqft: rawMappedQuery.strict.minLotSqft === 0 ? null : rawMappedQuery.strict.minLotSqft,
+        maxLotSqft: rawMappedQuery.strict.maxLotSqft === 0 ? null : rawMappedQuery.strict.maxLotSqft,
         minYearBuilt: rawMappedQuery.strict.minYearBuilt === 0 ? null : rawMappedQuery.strict.minYearBuilt,
         maxYearBuilt: rawMappedQuery.strict.maxYearBuilt === 0 ? null : rawMappedQuery.strict.maxYearBuilt,
         poolYn: rawMappedQuery.strict.poolYn === false ? null : rawMappedQuery.strict.poolYn,
